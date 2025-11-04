@@ -41,29 +41,7 @@ TOKEN_FILE = "token.json"
 # --- "LOCAL WATCHER" (SERVICE) LOGIC ---
 # ==============================================================================
 
-class LocalPatchHandler(FileSystemEventHandler):
-    def on_created(self, event):
-        if event.is_directory: return
-        filepath = event.src_path
-        filename = os.path.basename(filepath)
-
-        if filename.endswith(".txt"):
-            print(f"\n\n--- [Local Watcher] New File Detected: {filename} ---", flush=True)
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    script_content = f.read()
-                
-                # --- Pass to the shared verification and execution logic ---
-                if verify_and_run_patch(script_content, filename):
-                    print(f"[Local Watcher] Cleaning up '{filename}'...", flush=True)
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-                else:
-                    print(f"[Local Watcher] Patch failed or was aborted. Deleting '{filename}'.", flush=True)
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-            except Exception as e:
-                print(f"[Local Watcher] Error processing file: {e}. Ignoring.", flush=True)
+# DELETING OLD BUGGY CLASS DEFINITION FROM HERE
 
 def start_local_watcher():
     if not WATCHDOG_INSTALLED:

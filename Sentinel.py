@@ -57,8 +57,8 @@ def start_local_watcher():
             filepath = event.src_path
             filename = os.path.basename(filepath)
     
-            if filename.endswith(".txt"):
-                print(f"\n\n--- [Local Watcher] New File Detected: {filename} ---", flush=True)
+            if filename.endswith(".txt") and filename.startswith("SentScript"):
+                print(f"\n\n--- [Local Watcher] New Patch File Detected: {filename} ---", flush=True)
                 try:
                     with open(filepath, 'r', encoding='utf-8') as f:
                         script_content = f.read()
@@ -82,7 +82,7 @@ def start_local_watcher():
     
     print("==================================================")
     print("✅ Sentinel 'Local Watcher' Service Started")
-    print(f"Watching for new .txt files in: {os.path.abspath(path)}")
+    print(f"Watching for new 'SentScript*.txt' files in: {os.path.abspath(path)}")
     print("Save a patch .txt from Gemini here to begin.")
     print("Press CTRL+C to stop the watcher.")
     print("==================================================")
@@ -135,7 +135,7 @@ def start_drive_watcher():
 
     print("==================================================")
     print("✅ Sentinel 'Google Drive Watcher' Service Started")
-    print(f"Polling for new .txt files every {POLL_INTERVAL_SECONDS} seconds.")
+    print(f"Polling for new 'SentScript*.txt' files every {POLL_INTERVAL_SECONDS} seconds.")
     print("Export a patch .txt from Gemini to your Google Drive to begin.")
     print("Press CTRL+C to stop the watcher.")
     print("==================================================")
@@ -145,9 +145,9 @@ def start_drive_watcher():
     try:
         while True:
             try:
-                # Search for .txt files, ordered by creation time
+                # Search for .txt files that start with "SentScript"
                 results = service.files().list(
-                    q="mimeType='text/plain'",
+                    q="mimeType='text/plain' and name starts with 'SentScript'",
                     pageSize=10,
                     orderBy="createdTime desc",
                     fields="files(id, name, createdTime)"
@@ -164,7 +164,7 @@ def start_drive_watcher():
                         filename = item['name']
                         
                         if file_id not in processed_file_ids:
-                            print(f"\n--- [Drive Watcher] New File Detected: {filename} (ID: {file_id}) ---", flush=True)
+                            print(f"\n--- [Drive Watcher] New Patch File Detected: {filename} (ID: {file_id}) ---", flush=True)
                             processed_file_ids.add(file_id) # Mark as processed
                             
                             try:

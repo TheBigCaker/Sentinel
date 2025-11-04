@@ -12,8 +12,8 @@ This system is designed for a fast, iterative loop.
 
 1.  **Developer:** Starts a new chat with Gemini using a handoff_*.txt prompt. "Gemini, I need to fix a bug in main.py."
 2.  **Gemini:** Provides a self-contained PowerShell script (formatted as a .txt file) containing the code patch and Git commands.
-3.  **Developer:** Exports this .txt file from the Canvas to their **Google Drive** (or a local "hot folder").
-4.  **Sentinel (Watcher):** (Running in a dedicated terminal) Instantly detects the new file.
+3.  **Developer:** Exports this .txt file from the Canvas **with a name starting with 'SentScript'** (e.g., SentScript(Patch1).txt) to their Google Drive or local "hot folder".
+4.  **Sentinel (Watcher):** (Running in a dedicated terminal) Instantly detects the new, correctly-named file.
 5.  **Sentinel (Watcher):** Prints the *entire content* of the script for the developer to review and asks: Do you approve and want to RUN this patch? (y/n):
 6.  **Developer:** Reviews the patch script and types y to approve.
 7.  **Sentinel (Watcher):** Executes the PowerShell script, which in turn calls Sentinel (Tool).
@@ -97,11 +97,13 @@ You now have two choices for your "hot folder."
 `ash
 python Sentinel.py watch drive
 `
+(Watches for SentScript*.txt files on your Drive)
 
 **To use the Local Folder Watcher:**
 `ash
 python Sentinel.py watch local
 `
+(Watches for SentScript*.txt files in the local folder)
 
 The terminal will display which service is running. Press CTRL+C to stop it.
 

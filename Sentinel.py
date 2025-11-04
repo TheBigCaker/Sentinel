@@ -77,7 +77,7 @@ def start_local_watcher():
     observer.schedule(event_handler, path, recursive=False)
     
     print("==================================================")
-    print("✅ Sentinel "Local Watcher" Service Started")
+    print("✅ Sentinel 'Local Watcher' Service Started")
     print(f"Watching for new .txt files in: {os.path.abspath(path)}")
     print("Save a patch .txt from Gemini here to begin.")
     print("Press CTRL+C to stop the watcher.")
@@ -130,7 +130,7 @@ def start_drive_watcher():
         sys.exit(1)
 
     print("==================================================")
-    print("✅ Sentinel "Google Drive Watcher" Service Started")
+    print("✅ Sentinel 'Google Drive Watcher' Service Started")
     print(f"Polling for new .txt files every {POLL_INTERVAL_SECONDS} seconds.")
     print("Export a patch .txt from Gemini to your Google Drive to begin.")
     print("Press CTRL+C to stop the watcher.")

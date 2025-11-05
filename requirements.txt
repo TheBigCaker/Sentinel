@@ -8,4 +8,8 @@ google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
 
-#Note: tkinter (for 'register') is part of the standard Python library
+#For reading .docx files from Google Drive
+
+#python-docxter is part of the standard Python library
+
+python-docx

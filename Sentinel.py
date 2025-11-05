@@ -6,6 +6,16 @@ import time
 import subprocess
 import ast
 import io
+import json
+import uuid
+
+# --- Try to import GUI libraries (for 'register' command) ---
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+    TKINTER_INSTALLED = True
+except ImportError:
+    TKINTER_INSTALLED = False
 
 # --- Try to import watcher libraries ---
 try:
@@ -15,6 +25,7 @@ try:
 except ImportError:
     WATCHDOG_INSTALLED = False
 
+# --- Try to import Google API libraries ---
 try:
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
@@ -27,63 +38,103 @@ except ImportError:
     GOOGLE_API_INSTALLED = False
 
 # --- Configuration ---
-WATCH_DIRECTORY = "."  # Default for local watcher
-TEMP_SCRIPT_NAME = "_current_patch.ps1"
+# Sentinel now lives in its own "home" directory
+SENTINEL_HOME_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(SENTINEL_HOME_DIR, "sentinel_config.json")
+TEMP_SCRIPT_NAME = "_current_patch.ps1" # Will be created *inside* the target project
 POLL_INTERVAL_SECONDS = 30 # How often to check Google Drive
+
 # Google Drive:
-# If modifying these scopes, delete token.json.
 SCOPES = ["https://www.googleapis.com/auth/drive"]
-CREDENTIALS_FILE = "credentials.json"
-TOKEN_FILE = "token.json"
+CREDENTIALS_FILE = os.path.join(SENTINEL_HOME_DIR, "credentials.json")
+TOKEN_FILE = os.path.join(SENTINEL_HOME_DIR, "token.json")
 # ---------------------
+
+def load_config():
+    """Loads the project-to-path mapping from the JSON config."""
+    if not os.path.exists(CONFIG_FILE):
+        return {}
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        print(f"Warning: Config file {CONFIG_FILE} is corrupted. Returning empty config.", file=sys.stderr)
+        return {}
+
+def save_config(config_data):
+    """Saves the project-to-path mapping to the JSON config."""
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config_data, f, indent=4)
+        return True
+    except Exception as e:
+        print(f"Error saving config file: {e}", file=sys.stderr)
+        return False
 
 # ==============================================================================
 # --- "LOCAL WATCHER" (SERVICE) LOGIC ---
 # ==============================================================================
 
-# DELETING OLD BUGGY CLASS DEFINITION FROM HERE
-
 def start_local_watcher():
     if not WATCHDOG_INSTALLED:
-        print("Error: The 'watchdog' library is required to run the local watcher.", file=sys.stderr)
-        print("Please run: pip install watchdog", file=sys.stderr)
+        print("Error: 'watchdog' is required. Please run: pip install watchdog", file=sys.stderr)
         sys.exit(1)
         
-    # --- Define the handler class *inside* the function ---
-    # This prevents the NameError if watchdog isn't installed
+    config = load_config()
+    if not config:
+        print("Error: No projects registered. Run 'python Sentinel.py register' first.", file=sys.stderr)
+        sys.exit(1)
+        
+    print("Local Watcher scanning for registered projects:")
+    for proj_id, path in config.items():
+        print(f"  - {proj_id}: {path}")
+
     class LocalPatchHandler(FileSystemEventHandler):
         def on_created(self, event):
             if event.is_directory: return
             filepath = event.src_path
             filename = os.path.basename(filepath)
-    
-            if filename.endswith(".txt") and filename.startswith("SentScript"):
-                print(f"\n\n--- [Local Watcher] New Patch File Detected: {filename} ---", flush=True)
+            
+            # Check for our new file format: SentScript-PROJECT_ID-*.txt
+            if filename.endswith(".txt") and filename.startswith("SentScript-"):
                 try:
+                    # Extract Project ID
+                    project_id = filename.split('-')[1]
+                    config = load_config()
+                    
+                    if project_id not in config:
+                        print(f"\n[Local Watcher] Detected file for unknown project ID: {project_id}. Ignoring.", flush=True)
+                        return
+                        
+                    target_project_path = config[project_id]
+                    print(f"\n\n--- [Local Watcher] New Patch File Detected: {filename} ---", flush=True)
+                    print(f"--- Target Project: {project_id} ({target_project_path}) ---", flush=True)
+
                     with open(filepath, 'r', encoding='utf-8') as f:
                         script_content = f.read()
                     
-                    # --- Pass to the shared verification and execution logic ---
-                    if verify_and_run_patch(script_content, filename):
+                    if verify_and_run_patch(script_content, filename, target_project_path):
                         print(f"[Local Watcher] Cleaning up '{filename}'...", flush=True)
                         if os.path.exists(filepath):
                             os.remove(filepath)
                     else:
-                        print(f"[Local Watcher] Patch failed or was aborted. Deleting '{filename}'.", flush=True)
+                        print(f"[Local Watcher] Patch failed or aborted. Deleting '{filename}'.", flush=True)
                         if os.path.exists(filepath):
                             os.remove(filepath)
                 except Exception as e:
                     print(f"[Local Watcher] Error processing file: {e}. Ignoring.", flush=True)
 
-    path = WATCH_DIRECTORY
-    event_handler = LocalPatchHandler()
+    # Watcher must now watch all registered directories
     observer = Observer()
-    observer.schedule(event_handler, path, recursive=False)
-    
+    for path in config.values():
+        if os.path.exists(path):
+            observer.schedule(LocalPatchHandler(), path, recursive=False)
+        else:
+            print(f"Warning: Path not found for project. Not watching: {path}", file=sys.stderr)
+
     print("==================================================")
     print("✅ Sentinel 'Local Watcher' Service Started")
-    print(f"Watching for new 'SentScript*.txt' files in: {os.path.abspath(path)}")
-    print("Save a patch .txt from Gemini here to begin.")
+    print(f"Watching for new 'SentScript-ID-*.txt' files in all registered project folders.")
     print("Press CTRL+C to stop the watcher.")
     print("==================================================")
     
@@ -111,7 +162,7 @@ def get_drive_service():
         else:
             if not os.path.exists(CREDENTIALS_FILE):
                 print(f"FATAL ERROR: '{CREDENTIALS_FILE}' not found.", file=sys.stderr)
-                print("Please follow the setup guide in readme.md to get this file.", file=sys.stderr)
+                print(f"Please follow the setup guide in readme.md to get this file.", file=sys.stderr)
                 sys.exit(1)
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
             creds = flow.run_local_server(port=0)
@@ -121,8 +172,7 @@ def get_drive_service():
 
 def start_drive_watcher():
     if not GOOGLE_API_INSTALLED:
-        print("Error: The Google API libraries are required to run the Drive watcher.", file=sys.stderr)
-        print("Please run: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib", file=sys.stderr)
+        print("Error: Google API libraries are required. Please run: pip install -r requirements.txt", file=sys.stderr)
         sys.exit(1)
 
     print("Authenticating with Google Drive...")
@@ -135,8 +185,7 @@ def start_drive_watcher():
 
     print("==================================================")
     print("✅ Sentinel 'Google Drive Watcher' Service Started")
-    print(f"Polling for new 'SentScript*.txt' files every {POLL_INTERVAL_SECONDS} seconds.")
-    print("Export a patch .txt from Gemini to your Google Drive to begin.")
+    print(f"Polling for new 'SentScript-ID-*.txt' files every {POLL_INTERVAL_SECONDS} seconds.")
     print("Press CTRL+C to stop the watcher.")
     print("==================================================")
     
@@ -145,9 +194,9 @@ def start_drive_watcher():
     try:
         while True:
             try:
-                # Search for .txt files that start with "SentScript"
+                # Search for .txt files that start with "SentScript-"
                 results = service.files().list(
-                    q="mimeType='text/plain' and name starts with 'SentScript'",
+                    q="mimeType='text/plain' and name starts with 'SentScript-'",
                     pageSize=10,
                     orderBy="createdTime desc",
                     fields="files(id, name, createdTime)"
@@ -158,37 +207,53 @@ def start_drive_watcher():
                 if not items:
                     print(f"[{time.ctime()}] No new .txt files found. Sleeping...", end="\r", flush=True)
                 else:
-                    # Process files in reverse order (oldest first)
+                    config = load_config()
                     for item in reversed(items):
                         file_id = item['id']
                         filename = item['name']
                         
-                        if file_id not in processed_file_ids:
-                            print(f"\n--- [Drive Watcher] New Patch File Detected: {filename} (ID: {file_id}) ---", flush=True)
-                            processed_file_ids.add(file_id) # Mark as processed
-                            
-                            try:
-                                # Download the file content
-                                request = service.files().get_media(fileId=file_id)
-                                file_handle = io.BytesIO()
-                                downloader = MediaIoBaseDownload(file_handle, request)
-                                done = False
-                                while done is False:
-                                    status, done = downloader.next_chunk()
-                                script_content = file_handle.getvalue().decode('utf-8')
-                                
-                                # --- Pass to the shared verification and execution logic ---
-                                if verify_and_run_patch(script_content, filename):
-                                    print(f"[Drive Watcher] Deleting '{filename}' from Google Drive...", flush=True)
-                                    service.files().delete(fileId=file_id).execute()
-                                else:
-                                    print(f"[Drive Watcher] Patch failed or aborted. Deleting '{filename}' from Drive.", flush=True)
-                                    service.files().delete(fileId=file_id).execute()
+                        if file_id in processed_file_ids:
+                            continue
 
-                            except HttpError as e:
-                                print(f"[Drive Watcher] Error processing file {filename}: {e}", flush=True)
-                            except Exception as e:
-                                print(f"[Drive Watcher] A critical error occurred processing {filename}: {e}", flush=True)
+                        # --- New Multi-Project Logic ---
+                        try:
+                            project_id = filename.split('-')[1]
+                        except IndexError:
+                            print(f"\n[Drive Watcher] Invalid filename format (no ID): {filename}. Ignoring.", flush=True)
+                            processed_file_ids.add(file_id) # Mark as processed to avoid re-checking
+                            continue
+                            
+                        if project_id not in config:
+                            print(f"\n[Drive Watcher] Detected file for unknown project ID: {project_id}. Ignoring.", flush=True)
+                            processed_file_ids.add(file_id)
+                            continue
+                        
+                        target_project_path = config[project_id]
+                        print(f"\n--- [Drive Watcher] New Patch File Detected: {filename} (ID: {file_id}) ---", flush=True)
+                        print(f"--- Target Project: {project_id} ({target_project_path}) ---", flush=True)
+                        processed_file_ids.add(file_id) # Mark as processed
+                        
+                        try:
+                            # Download the file content
+                            request = service.files().get_media(fileId=file_id)
+                            file_handle = io.BytesIO()
+                            downloader = MediaIoBaseDownload(file_handle, request)
+                            done = False
+                            while done is False:
+                                status, done = downloader.next_chunk()
+                            script_content = file_handle.getvalue().decode('utf-8')
+                            
+                            if verify_and_run_patch(script_content, filename, target_project_path):
+                                print(f"[Drive Watcher] Deleting '{filename}' from Google Drive...", flush=True)
+                                service.files().delete(fileId=file_id).execute()
+                            else:
+                                print(f"[Drive Watcher] Patch failed or aborted. Deleting '{filename}' from Drive.", flush=True)
+                                service.files().delete(fileId=file_id).execute()
+
+                        except HttpError as e:
+                            print(f"[Drive Watcher] Error processing file {filename}: {e}", flush=True)
+                        except Exception as e:
+                            print(f"[Drive Watcher] A critical error occurred processing {filename}: {e}", flush=True)
                                 
             except HttpError as e:
                 print(f"\n[Drive Watcher] API Error: {e}. Retrying...", flush=True)
@@ -204,25 +269,18 @@ def start_drive_watcher():
 # --- "ROBOT SURGEON" (TOOL) & SHARED LOGIC ---
 # ==============================================================================
 
-def verify_and_run_patch(script_content, source_filename):
+def verify_and_run_patch(script_content, source_filename, target_project_path):
     """
-    Shared logic to verify and execute a patch script.
-    Returns True on success, False on failure or abort.
+    Shared logic to verify and execute a patch script *in the target project's directory*.
     """
     if not script_content.strip():
         print(f"[Watcher] File '{source_filename}' is empty. Ignoring.", flush=True)
         return False
         
-    # --- 1. Verification Step ---
-    print("--------------------------------------------------")
-    print(f"--- VERIFY PATCH FROM: {source_filename} ---")
-    print("--------------------------------------------------")
+    print(f"--- VERIFY PATCH FOR: {source_filename} ---")
     print(script_content)
-    print("--------------------------------------------------")
     print("--- END OF PATCH SCRIPT ---")
-    print("--------------------------------------------------")
     
-    # --- 2. Confirmation Gate ---
     try:
         choice = input(f"Do you approve and want to RUN this patch? (y/n): ")
     except EOFError:
@@ -232,15 +290,19 @@ def verify_and_run_patch(script_content, source_filename):
         print("[Watcher] User aborted.", flush=True)
         return False
 
-    # --- 3. Save as .ps1 and Execute ---
     print("[Watcher] User approved. Executing patch...", flush=True)
+    
+    # We must run the patch script *from within* the target project directory
+    temp_script_path = os.path.join(target_project_path, TEMP_SCRIPT_NAME)
+    
     try:
-        with open(TEMP_SCRIPT_NAME, 'w', encoding='utf-8') as f:
+        with open(temp_script_path, 'w', encoding='utf-8') as f:
             f.write(script_content)
         
+        # Execute the script *with the target path as the Current Working Directory*
         subprocess.run(
             ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", TEMP_SCRIPT_NAME],
-            check=True, shell=True
+            check=True, shell=True, cwd=target_project_path # This is the magic!
         )
         print("[Watcher] Patch script executed successfully.", flush=True)
         return True
@@ -249,9 +311,8 @@ def verify_and_run_patch(script_content, source_filename):
         print(f"[Watcher] ERROR: The patch script failed to run: {e}", flush=True)
         return False
     finally:
-        # --- 4. Cleanup local temp script ---
-        if os.path.exists(TEMP_SCRIPT_NAME):
-            os.remove(TEMP_SCRIPT_NAME)
+        if os.path.exists(temp_script_path):
+            os.remove(temp_script_path)
 
 def get_block_regex(block_name, file_extension):
     escaped_name = re.escape(block_name)
@@ -264,6 +325,8 @@ def get_block_regex(block_name, file_extension):
     return re.compile(f"(?s)({re.escape(start_sentinel)})(.*)({re.escape(end_sentinel)})")
 
 def patch_file(filepath, block_name, new_content):
+    # This function is now called *by* the .ps1 script, so it runs
+    # in the correct project directory.
     if not os.path.exists(filepath):
         print(f"Error: File not found: {filepath}", file=sys.stderr)
         return False
@@ -312,18 +375,34 @@ def bootstrap_file(filepath):
     except Exception as e:
         print(f"Error parsing Python file: {e}", file=sys.stderr)
         return False
+    
+    # Add parent links to tree for accurate filtering
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            setattr(child, '_parent', node)
+
     insertions = []
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and isinstance(node.__dict__.get('_parent'), ast.Module):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and hasattr(node, '_parent') and isinstance(node._parent, ast.Module):
             func_name = node.name
             start_line = node.lineno
             end_line = node.end_lineno
+            
+            if node.decorator_list:
+                start_line = node.decorator_list[0].lineno
+
+            if node.body:
+                last_body_item = node.body[-1]
+                end_line = getattr(last_body_item, 'end_lineno', last_body_item.lineno)
+
             indent = " " * node.col_offset
             insertions.append((start_line - 1, f"{indent}# --- BLOCK: {func_name} ---\n"))
             insertions.append((end_line, f"{indent}# --- ENDBLOCK: {func_name} ---\n"))
+
     if not insertions:
         print("No top-level functions found. Nothing to bootstrap.", file=sys.stderr)
         return False
+        
     insertions.sort(key=lambda x: x[0], reverse=True)
     new_lines = list(lines)
     for line_index, text_to_insert in insertions:
@@ -338,12 +417,50 @@ def bootstrap_file(filepath):
         print(f"Error writing bootstrapped file: {e}", file=sys.stderr)
         return False
 
+def register_project():
+    """Uses a GUI to select a folder and registers it with a unique ID."""
+    if not TKINTER_INSTALLED:
+        print("Error: 'tkinter' is required for the register command.", file=sys.stderr)
+        print("Tkinter is usually included with Python, but your installation may be missing it.", file=sys.stderr)
+        return False
+        
+    print("Opening folder selection dialog...")
+    root = tk.Tk()
+    root.withdraw() # Hide the main window
+    
+    project_path = filedialog.askdirectory(title="Select Project Folder to Register")
+    root.destroy()
+    
+    if not project_path:
+        print("No folder selected. Aborting.", flush=True)
+        return False
+        
+    project_path = os.path.normpath(project_path)
+    config = load_config()
+    
+    # Check if this path is already registered
+    for proj_id, path in config.items():
+        if path == project_path:
+            print(f"Project already registered with ID: {proj_id}", flush=True)
+            return True
+            
+    # Generate a unique ID (e.g., "proj-a1b2")
+    project_id = f"proj-{uuid.uuid4().hex[:4]}"
+    config[project_id] = project_path
+    
+    if save_config(config):
+        print(f"SUCCESS: Registered project at '{project_path}' with ID: {project_id}", flush=True)
+        return True
+    else:
+        print(f"Error: Failed to save updated config.", file=sys.stderr)
+        return False
+
 # ==============================================================================
 # --- MAIN "BOOTLOADER" ---
 # ==============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Warcamp Sentinel: An AI-driven patch workflow manager.")
+    parser = argparse.ArgumentParser(description="Sentinel v2.0: AI-driven multi-project patch manager.")
     
     subparsers = parser.add_subparsers(dest="command", required=True)
     
@@ -352,7 +469,7 @@ def main():
     watch_parser.add_argument("mode", choices=["local", "drive"], help="The type of watcher to run.")
 
     # --- "patch" command ---
-    patch_parser = subparsers.add_parser("patch", help="Patch a block in a file.")
+    patch_parser = subparsers.add_parser("patch", help="Patch a block in a file. (Called by patch scripts)")
     patch_parser.add_argument("filepath", help="The file to patch (e.g., 'main.py')")
     patch_parser.add_argument("block_name", help="The name of the block to patch (e.g., 'get_dashboard')")
 
@@ -360,10 +477,12 @@ def main():
     bootstrap_parser = subparsers.add_parser("bootstrap", help="One-time setup to add sentinel markers to a file.")
     bootstrap_parser.add_argument("filepath", help="The file to bootstrap (e.g., 'main.py')")
     
+    # --- "register" command ---
+    register_parser = subparsers.add_parser("register", help="Register a new project folder with Sentinel (opens GUI).")
+
     try:
         args = parser.parse_args()
     except SystemExit:
-        # argparse prints help, so we just exit
         return
         
     if args.command == "watch":
@@ -379,6 +498,10 @@ def main():
 
     elif args.command == "bootstrap":
         if not bootstrap_file(args.filepath):
+            sys.exit(1)
+            
+    elif args.command == "register":
+        if not register_project():
             sys.exit(1)
 
 if __name__ == "__main__":

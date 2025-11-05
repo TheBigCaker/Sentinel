@@ -1,1 +1,11 @@
-﻿
+﻿#For the Watcher modes
+
+watchdog
+
+#For the Google Drive Watcher
+
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+
+#Note: tkinter (for 'register') is part of the standard Python library

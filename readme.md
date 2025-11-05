@@ -1,135 +1,106 @@
-﻿# Sentinel.py (v1.2): AI-Driven Patch Workflow
+﻿# Sentinel.py (v2.0): AI-Driven Multi-Project Patch Workflow
 
-Sentinel.py is a Python utility designed to bridge the gap between a human developer, a generative AI (like Gemini), and a local codebase. It creates a seamless, "hot-folder" workflow for applying, verifying, and deploying AI-generated code patches.
+Sentinel.py is a Python utility designed to bridge the gap between a human developer, a generative AI (like Gemini), and *multiple* local codebases. It's a central "command center" that uses a "hot-folder" workflow to apply, verify, and deploy AI-generated code patches to any registered project.
 
-It operates in two modes:
-1.  **"Watcher" (Service):** A background service that watches for new patch files (.txt), either in a **local folder** or on **Google Drive**.
-2.  **"Tool" (Surgeon):** A command-line tool used to perform surgical code-patching (patch) or prepare a file for patching (ootstrap).
+It operates in three modes:
+1.  **"Register" (Tool):** A one-time command (egister) that opens a GUI to link a project folder to a unique ID.
+2.  **"Watcher" (Service):** A background service (watch) that monitors Google Drive or local folders for new patch files.
+3.  **"Tool" (Surgeon):** Command-line tools used by patch scripts to patch a file or ootstrap a new one.
 
-## The "Rinse and Repeat" Workflow
+## The v2.0 "Rinse and Repeat" Workflow
 
-This system is designed for a fast, iterative loop.
+This system is designed for a fast, iterative loop across all your projects.
 
-1.  **Developer:** Starts a new chat with Gemini using a handoff_*.txt prompt. "Gemini, I need to fix a bug in main.py."
-2.  **Gemini:** Provides a self-contained PowerShell script (formatted as a .txt file) containing the code patch and Git commands.
-3.  **Developer:** Exports this .txt file from the Canvas **with a name starting with 'SentScript'** (e.g., SentScript(Patch1).txt) to their Google Drive or local "hot folder".
-4.  **Sentinel (Watcher):** (Running in a dedicated terminal) Instantly detects the new, correctly-named file.
-5.  **Sentinel (Watcher):** Prints the *entire content* of the script for the developer to review and asks: Do you approve and want to RUN this patch? (y/n):
-6.  **Developer:** Reviews the patch script and types y to approve.
-7.  **Sentinel (Watcher):** Executes the PowerShell script, which in turn calls Sentinel (Tool).
-8.  **Sentinel (Tool):** Surgically replaces the code block in main.py and the script pushes the changes to Git.
-9.  **Developer:** "Gemini, the patch is live. Please verify the repo."
+1.  **Developer (One-Time):** For each project (e.g., C:\dev\warcamp), runs python C:\Users\DavidBaker\.sentinel\Sentinel.py register. The GUI pops up, they select the folder, and Sentinel reports: SUCCESS: Registered... with ID: proj-a1b2.
+2.  **Developer:** Starts a chat with Gemini: "Gemini, I need to fix a bug in project proj-a1b2."
+3.  **Gemini:** Provides a PowerShell script (formatted as .txt) containing the patch.
+4.  **Developer:** Exports this .txt file from the Canvas with the new name format: **SentScript-proj-a1b2-FixBug.txt**.
+5.  **Sentinel (Watcher):** (Running in a dedicated terminal) Instantly detects the new file on Google Drive.
+6.  **Sentinel (Watcher):** It parses the ID (proj-a1b2), looks up the path (C:\dev\warcamp), and prints the patch content for review.
+7.  **Developer:** Reviews the patch script and types y to approve.
+8.  **Sentinel (Watcher):** Executes the PowerShell script *from within the C:\dev\warcamp directory*.
+9.  **The Patch Script:** The script runs, calls python C:\Users\DavidBaker\.sentinel\Sentinel.py patch main.py ..., and pushes the project's changes to Git.
+10. **Developer:** "Gemini, the patch is live in proj-a1b2. Please verify."
 
 ---
 
-## 1. One-Time Environment Setup
+## 1. One-Time Sentinel Installation
 
-Before first use, you must set up your environment.
+Run this installer script (Install-Sentinel-v2.ps1). It will create the $HOME\.sentinel directory and put all the necessary files inside it.
 
 ### A. Install Python Dependencies
 
-Sentinel has dependencies for its different modes. Install all of them.
+Sentinel has dependencies. After running the installer, run this command:
 
 `ash
-# Install from requirements.txt
-pip install -r requirements.txt
+# Install from the new requirements.txt
+pip install -r C:\Users\DavidBaker\.sentinel\requirements.txt
 `
 
 ### B. PowerShell Execution Policy
 
-PowerShell is locked down by default. You must run this **one-time** command in an **Administrator** PowerShell window to allow your local scripts to run.
+PowerShell is locked down by default. You must run this **one-time** command in an **Administrator** PowerShell window.
 
 `powershell
 # This tells PowerShell to trust scripts you (the current user) create.
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 `
 
-### C. (Optional) Google Drive Watcher Setup
+### C. Google Drive Watcher Setup
 
-**This is a 15-minute, one-time setup.** If you only want to use the local watcher, you can skip this. This text is based on the guide you provided.
-
-**Step 1: Enable the Google Drive API**
-1.  Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2.  Create a new project (or select an existing one).
-3.  In the search bar at the top, type "**Google Drive API**" and select it.
-4.  Click the "**Enable**" button.
-
-**Step 2: Configure Consent Screen**
-1.  Click "**Credentials**" in the left-hand menu.
-2.  If prompted, click "**Configure Consent Screen**".
-3.  Select "**External**" and click "**Create**".
-4.  **App name:** "Sentinel Drive Watcher"
-5.  **User support email:** Your email.
-6.  **Developer contact:** Your email.
-7.  Click "**Save and Continue**" for the rest of the steps. You don't need to add scopes or test users. Finally, click "**Back to Dashboard**".
-
-**Step 3: Create Credentials**
-1.  Go back to "**Credentials**".
-2.  Click "**+ CREATE CREDENTIALS**" > "**OAuth client ID**".
-3.  For "**Application type**", select "**Desktop app**".
-4.  Give it a name (e.g., "Sentinel CLI") and click "**Create**".
-5.  A window will pop up. Click "**DOWNLOAD JSON**".
-6.  **CRITICAL:** Rename the downloaded file to credentials.json and save it in the exact same directory as your Sentinel.py script.
-
-**Step 4: First-Time Run**
-The first time you run python Sentinel.py watch drive, your web browser will automatically open. You will be asked to log in and grant permission. This will create a 	oken.json file so you don't have to log in again.
+Follow the 15-minute, one-time setup to get your credentials.json file.
+**CRITICAL:** Place the credentials.json file inside your new **$HOME\.sentinel** directory.
 
 ---
 
-## 2. Project Setup (ootstrap)
+## 2. How to Use Sentinel v2.0
 
-Before you can patch a file, you must add "sentinel blocks." The ootstrap command does this automatically for Python files.
+All commands must now use the *full path* to the global Sentinel.py script.
+
+### Mode 1: Registering Your Projects
+
+For *every* project you want Sentinel to manage, run this command.
 
 `ash
-# Run this command ONCE on your Python code
-python Sentinel.py bootstrap main.py
+# This will open a GUI folder browser
+python C:\Users\DavidBaker\.sentinel\Sentinel.py register
 `
+Sentinel will give you a unique ID for that project. You will use this ID when talking to Gemini.
 
----
+### Mode 2: The "Watcher" (Service)
 
-## 3. How to Use Sentinel
+You only need to run *one* watcher. It will manage *all* your registered projects.
 
-### Mode 1: The "Watcher" (Service)
-
-You now have two choices for your "hot folder."
-
-**To use the Google Drive Watcher:**
 `ash
-python Sentinel.py watch drive
+# Run this in a dedicated terminal
+python C:\Users\DavidBaker\.sentinel\Sentinel.py watch drive
 `
-(Watches for SentScript*.txt files on your Drive)
 
-**To use the Local Folder Watcher:**
-`ash
-python Sentinel.py watch local
-`
-(Watches for SentScript*.txt files in the local folder)
+### Mode 3: The "Tool" (Surgeon)
 
-The terminal will display which service is running. Press CTRL+C to stop it.
-
-### Mode 2: The "Tool" (Surgeon)
-
-These are the commands your AI-generated patch scripts will call.
-
-**patch**
-`ash
-# Replaces the content of a block, reading from stdin
-python Sentinel.py patch [filepath] [block_name]
-`
+You will rarely run these. The AI-generated patch scripts will run them for you.
 
 **ootstrap**
 `ash
-# Adds sentinel markers to a file
-python Sentinel.py bootstrap [filepath]
+# Prepares a project's file for patching
+python C:\Users\DavidBaker\.sentinel\Sentinel.py bootstrap C:\dev\warcamp\main.py
+`
+
+**patch**
+`ash
+# This is what the patch scripts will call
+python C:\Users\DavidBaker\.sentinel\Sentinel.py patch C:\dev\warcamp\main.py [block_name]
 `
 "@
 
-# --- 4. Define requirements.txt Contents (v1.2) ---
+# --- 4. Define requirements.txt Contents (v2.0) ---
  = @"
-# For the Local Watcher
+# For the Watcher modes
 watchdog
 
 # For the Google Drive Watcher
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
+
+# Note: tkinter (for 'register') is part of the standard Python library

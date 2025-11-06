@@ -28,7 +28,7 @@ try:
     SCREENSHOT_FILE = config['screenshot_file']
     
     memory = sentinel_memory.Memory(DB_PATH)
-    llm = None # v2.3: AI model will be loaded in main()
+    llm = None
     
 except FileNotFoundError:
     print("ERROR: sentinel_config.json not found.")
@@ -37,7 +37,7 @@ except KeyError as e:
     print(f"ERROR: Config file is missing a key: {e}")
     sys.exit(1)
 
-# --- 2. PROMPTS (v2.4 - Escaped Braces Fix) ---
+# --- 2. PROMPTS (v2.5 - Embedding Fix) ---
 VISION_PROMPT_FIND = (
     "USER: [Image]Look at this screenshot of a computer screen. "
     "I am looking for the <{target_description}>. "
@@ -45,9 +45,9 @@ VISION_PROMPT_FIND = (
     "Respond ONLY with JSON: {{\"x\": <center_x>, \"y\": <center_y>}}"
 )
 
+# v2.5: Changed prompt to be a simple task
 VISION_PROMPT_GET_EMBEDDING = (
-    "USER: [Image]Look at this small, cropped image of a user interface element. "
-    "Generate a vector embedding for this image."
+    "USER: [Image]Describe this user interface element briefly."
 )
 
 # -------------------------------------------
@@ -94,13 +94,13 @@ def perceive_environment():
         print(f"[PERCEIVE] Error: Could not get active window: {e}")
         return None, None
 
-# --- v2.3: "EYES" FUNCTIONS ---
+# --- "EYES" FUNCTIONS ---
 
 def load_ai_model():
     """Loads the Llama model into memory."""
     global llm
     if llm:
-        return # Already loaded
+        return
         
     print(f"[EYES] Loading model... (This may take a moment)")
     try:
@@ -108,8 +108,8 @@ def load_ai_model():
             model_path=MODEL_PATH,
             n_ctx=2048,
             n_batch=512,
-            logits_all=True,    # Needed for get_visual_embedding
-            embedding=True,     # Needed for get_visual_embedding
+            logits_all=True,
+            embedding=True,
             verbose=False
         )
         print("[EYES] Model loaded successfully.")
@@ -123,7 +123,7 @@ def find_target_on_screen(target_label, target_description):
     and returns the (x, y) coordinates.
     """
     print(f"[EYES] Scanning for target: '{target_label}'...")
-    screenshot_path = take_screenshot() # Full screen
+    screenshot_path = take_screenshot()
     if not screenshot_path:
         return None, None
         
@@ -169,13 +169,12 @@ def get_visual_embedding(x, y):
     and returns its vector embedding to be stored in memory.
     """
     print(f"[EYES] Learning target at ({x}, {y})...")
-    # Take a small 64x64 screenshot centered on the target
     crop_box = (x - 32, y - 32, x + 32, y + 32)
     screenshot_path = take_screenshot(bbox=crop_box)
     if not screenshot_path:
         return None
         
-    prompt = VISION_PROMPT_GET_EMBEDDING # No .format needed
+    prompt = VISION_PROMPT_GET_EMBEDDING
     
     messages = [
         {"role": "user",
@@ -186,16 +185,20 @@ def get_visual_embedding(x, y):
     ]
     
     try:
-        # Ask the model to generate an embedding for the image
-        response = llm.create_chat_completion(messages=messages, max_tokens=1)
+        # v2.5 FIX: Give the model room to "think" and generate
+        response = llm.create_chat_completion(messages=messages, max_tokens=100)
         
-        # The embedding is not in 'choices', but on the response object itself
-        if hasattr(response, 'embedding'):
-            embedding = response.embedding
+        # v2.5 DEBUG: Print the whole response
+        print(f"[EYES] Full Embedding Response: {response}")
+        
+        # Check for the embedding on the response object
+        # Note: This is still an assumption, but a much more likely one.
+        if 'embedding' in response and response['embedding']:
+            embedding = response['embedding']
             print(f"[EYES] Successfully generated embedding for target.")
             return embedding
         else:
-            print("[EYES] Error: Model did not return an embedding.")
+            print("[EYES] Error: Model response did not contain an embedding.")
             return None
             
     except Exception as e:
@@ -205,7 +208,7 @@ def get_visual_embedding(x, y):
 # -------------------------------------------
 
 def main():
-    print("--- Sentinel Agent v2.4 (Brain + Memory + Learning) ---")
+    print("--- Sentinel Agent v2.5 (Brain + Memory + Learning) ---")
     
     if not os.path.exists(MODEL_PATH):
         print(f"ERROR: Model file not found at '{MODEL_PATH}'")
@@ -213,21 +216,19 @@ def main():
 
     print(f"Initializing memory at: {DB_PATH}")
     memory.init_db()
-    load_ai_model() # v2.3: Load the AI model on start
+    load_ai_model()
     
-    print("[BRAIN] Sentinel Agent v2.4 initialized.")
+    print("[BRAIN] Sentinel Agent v2.5 initialized.")
     print("This agent will now attempt to find and learn a target.")
     
     # --- v2.3: THE NEW AGENT LOOP ---
     
-    # 1. Define our goal for this test
     TARGET_LABEL = "gemini_copy_button"
     TARGET_APP = "chrome.exe"
     TARGET_DESC = "Copy contents' button in the Gemini chat interface"
     
     print(f"\n--- GOAL: Find '{TARGET_LABEL}' in '{TARGET_APP}' ---")
     
-    # 2. Perceive environment
     print("You have 3 seconds to switch to the target window (Google Gemini)...")
     time.sleep(3)
     app_name, window_title = perceive_environment()
@@ -240,25 +241,19 @@ def main():
         print(f"[BRAIN] Active app is '{app_name}', not '{TARGET_APP}'. Aborting test.")
         return
         
-    # 3. Retrieve Memory
     print(f"\n--- RETRIEVING MEMORY for '{TARGET_LABEL}' ---")
     fact = memory.retrieve_fact_memory(TARGET_LABEL, app_name)
     
     if fact:
         print(f"SUCCESS: Found memory for '{TARGET_LABEL}'!")
         print(f"  > Last Known Coords: ({fact.last_known_x}, {fact.last_known_y})")
-        # TODO: Add verification logic here.
-        # "Go to (x,y), take a small picture, and verify it matches
-        # the vector in ChromaDB with id=fact.chroma_id"
     else:
-        # 4. LEARN (The "Troubleshoot" Step)
         print(f"[BRAIN] No memory found for '{TARGET_LABEL}'.")
         print(f"Initiating full-screen scan to find and learn target...")
         
         x, y = find_target_on_screen(TARGET_LABEL, TARGET_DESC)
         
         if x and y:
-            # 5. STORE
             print(f"[BRAIN] Target found! Now learning what it looks like...")
             embedding = get_visual_embedding(x, y)
             

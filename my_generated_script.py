@@ -3,14 +3,14 @@ import json
 
 """
 This is a *template* Python script.
-Placeholders like _USERNAME_ and 9999 will be replaced
+Placeholders like _USERNAME_ and 1002 will be replaced
 by the PowerShell orchestrator before this script is run.
 """
 
 def create_user_data():
     # --- Placeholders to be injected ---
-    username = 'config_default_user'
-    user_id = 9999
+    username = 'jane_doe'
+    user_id = 1002
     output_filename = "user_data.json"
     # -----------------------------------
 

@@ -1,0 +1,7 @@
+{
+    "DefaultCommitMessage": "[AUTOMATION] Default automated script run.",
+    "DefaultUser": {
+        "Username": "config_default_user",
+        "UserID": 9999
+    }
+}

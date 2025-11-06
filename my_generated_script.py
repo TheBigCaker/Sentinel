@@ -2,16 +2,17 @@ import os
 import json
 
 """
-This is a generated Python script.
-It creates a JSON file with some user data.
+This is a *template* Python script.
+Placeholders like _USERNAME_ and 9999 will be replaced
+by the PowerShell orchestrator before this script is run.
 """
 
 def create_user_data():
-    # --- Python Placeholders: Modify these values ---
-    username = "david_baker"
-    user_id = 1001
+    # --- Placeholders to be injected ---
+    username = 'config_default_user'
+    user_id = 9999
     output_filename = "user_data.json"
-    # ------------------------------------------------
+    # -----------------------------------
 
     print(f"[AutoScript] Starting: Will create {output_filename}...")
     

@@ -1,10 +1,7 @@
 import sys
 import os
 import json
-import re
 import time
-from PIL import Image, ImageGrab
-from llama_cpp import Llama
 import pyautogui
 import pyperclip
 import sentinel_memory
@@ -23,12 +20,10 @@ try:
     with open('sentinel_config.json', 'r') as f:
         config = json.load(f)
     
-    MODEL_PATH = config['model_path']
     DB_PATH = config['db_path']
-    SCREENSHOT_FILE = config['screenshot_file']
+    # MODEL_PATH is no longer needed here
     
     memory = sentinel_memory.Memory(DB_PATH)
-    llm = None
     
 except FileNotFoundError:
     print("ERROR: sentinel_config.json not found.")
@@ -37,35 +32,7 @@ except KeyError as e:
     print(f"ERROR: Config file is missing a key: {e}")
     sys.exit(1)
 
-# --- 2. PROMPTS (v2.5 - Embedding Fix) ---
-VISION_PROMPT_FIND = (
-    "USER: [Image]Look at this screenshot of a computer screen. "
-    "I am looking for the <{target_description}>. "
-    "What are its absolute center (x, y) coordinates? "
-    "Respond ONLY with JSON: {{\"x\": <center_x>, \"y\": <center_y>}}"
-)
-
-# v2.5: Changed prompt to be a simple task
-VISION_PROMPT_GET_EMBEDDING = (
-    "USER: [Image]Describe this user interface element briefly."
-)
-
 # -------------------------------------------
-
-def get_full_screenshot_path():
-    return os.path.join(DB_PATH, SCREENSHOT_FILE)
-
-def take_screenshot(bbox=None):
-    """Takes a screenshot. If bbox is provided, crops to that region."""
-    full_path = get_full_screenshot_path()
-    print(f"Taking screenshot... saving to {full_path}")
-    try:
-        img = ImageGrab.grab(bbox=bbox, all_screens=True)
-        img.save(full_path)
-        return full_path
-    except Exception as e:
-        print(f"[EYES] Error: Could not take screenshot: {e}")
-        return None
 
 def perceive_environment():
     """Determines the currently active application and window."""
@@ -94,141 +61,39 @@ def perceive_environment():
         print(f"[PERCEIVE] Error: Could not get active window: {e}")
         return None, None
 
-# --- "EYES" FUNCTIONS ---
-
-def load_ai_model():
-    """Loads the Llama model into memory."""
-    global llm
-    if llm:
-        return
-        
-    print(f"[EYES] Loading model... (This may take a moment)")
+def click_at_position(x, y, description=""):
+    """
+    The "Hands" function. Clicks at a specific coordinate.
+    """
+    print(f"[HANDS] Activating for: '{description}'")
     try:
-        llm = Llama(
-            model_path=MODEL_PATH,
-            n_ctx=2048,
-            n_batch=512,
-            logits_all=True,
-            embedding=True,
-            verbose=False
-        )
-        print("[EYES] Model loaded successfully.")
+        print(f"Moving mouse to ({x}, {y})")
+        pyautogui.moveTo(x, y, duration=0.25)
+        print("Clicking...")
+        pyautogui.click()
+        print(f"--- Clicked '{description}' ---")
+        return True
     except Exception as e:
-        print(f"[EYES] CRITICAL ERROR: Failed to load model: {e}")
-        sys.exit(1)
-
-def find_target_on_screen(target_label, target_description):
-    """
-    Takes a full-screen screenshot, asks the AI to find the target,
-    and returns the (x, y) coordinates.
-    """
-    print(f"[EYES] Scanning for target: '{target_label}'...")
-    screenshot_path = take_screenshot()
-    if not screenshot_path:
-        return None, None
-        
-    prompt = VISION_PROMPT_FIND.format(target_description=target_description)
-    
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant that responds in JSON."},
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"file://{screenshot_path}"}}
-            ]
-        }
-    ]
-    
-    try:
-        response = llm.create_chat_completion(messages=messages, max_tokens=100)
-        response_text = response['choices'][0]['message']['content'].strip()
-        print(f"[EYES] AI Response: {response_text}")
-        
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if not json_match:
-            print("[EYES] Error: AI did not respond with valid JSON.")
-            return None, None
-            
-        coords = json.loads(json_match.group(0))
-        x, y = int(coords['x']), int(coords['y'])
-        
-        if x <= 0 or y <= 0:
-            raise ValueError(f"Invalid coordinates: ({x}, {y})")
-            
-        print(f"[EYES] Found '{target_label}' at ({x}, {y}).")
-        return x, y
-        
-    except Exception as e:
-        print(f"[EYES] Error during screen analysis: {e}")
-        return None, None
-
-def get_visual_embedding(x, y):
-    """
-    Takes a small, focused screenshot of a *known* target
-    and returns its vector embedding to be stored in memory.
-    """
-    print(f"[EYES] Learning target at ({x}, {y})...")
-    crop_box = (x - 32, y - 32, x + 32, y + 32)
-    screenshot_path = take_screenshot(bbox=crop_box)
-    if not screenshot_path:
-        return None
-        
-    prompt = VISION_PROMPT_GET_EMBEDDING
-    
-    messages = [
-        {"role": "user",
-         "content": [
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": f"file://{screenshot_path}"}}
-         ]}
-    ]
-    
-    try:
-        # v2.5 FIX: Give the model room to "think" and generate
-        response = llm.create_chat_completion(messages=messages, max_tokens=100)
-        
-        # v2.5 DEBUG: Print the whole response
-        print(f"[EYES] Full Embedding Response: {response}")
-        
-        # Check for the embedding on the response object
-        # Note: This is still an assumption, but a much more likely one.
-        if 'embedding' in response and response['embedding']:
-            embedding = response['embedding']
-            print(f"[EYES] Successfully generated embedding for target.")
-            return embedding
-        else:
-            print("[EYES] Error: Model response did not contain an embedding.")
-            return None
-            
-    except Exception as e:
-        print(f"[EYES] Error generating embedding: {e}")
-        return None
-
-# -------------------------------------------
+        print(f"[HANDS] Error: Could not run clicker: {e}")
+        return False
 
 def main():
-    print("--- Sentinel Agent v2.5 (Brain + Memory + Learning) ---")
+    print("--- Sentinel Agent v2.6 (Worker) ---")
     
-    if not os.path.exists(MODEL_PATH):
-        print(f"ERROR: Model file not found at '{MODEL_PATH}'")
-        sys.exit(1)
-
     print(f"Initializing memory at: {DB_PATH}")
     memory.init_db()
-    load_ai_model()
+    print("[BRAIN] Sentinel Agent v2.6 initialized.")
+    print("This agent will now attempt to find a target *from memory*.")
     
-    print("[BRAIN] Sentinel Agent v2.5 initialized.")
-    print("This agent will now attempt to find and learn a target.")
+    # --- THE NEW "WORKER" LOOP ---
     
-    # --- v2.3: THE NEW AGENT LOOP ---
+    # 1. Define our goal
+    # In a real app, this would come from a user prompt or task list
+    TARGET_LABEL = "gemini_copy_button" 
     
-    TARGET_LABEL = "gemini_copy_button"
-    TARGET_APP = "chrome.exe"
-    TARGET_DESC = "Copy contents' button in the Gemini chat interface"
+    print(f"\n--- GOAL: Find and click '{TARGET_LABEL}' ---")
     
-    print(f"\n--- GOAL: Find '{TARGET_LABEL}' in '{TARGET_APP}' ---")
-    
+    # 2. Perceive environment
     print("You have 3 seconds to switch to the target window (Google Gemini)...")
     time.sleep(3)
     app_name, window_title = perceive_environment()
@@ -237,41 +102,26 @@ def main():
         print("[BRAIN] Perception failed. Cannot continue.")
         return
         
-    if app_name != TARGET_APP:
-        print(f"[BRAIN] Active app is '{app_name}', not '{TARGET_APP}'. Aborting test.")
-        return
-        
-    print(f"\n--- RETRIEVING MEMORY for '{TARGET_LABEL}' ---")
+    # 3. Retrieve Memory
+    print(f"\n--- RETRIEVING MEMORY for '{TARGET_LABEL}' in '{app_name}' ---")
     fact = memory.retrieve_fact_memory(TARGET_LABEL, app_name)
     
     if fact:
         print(f"SUCCESS: Found memory for '{TARGET_LABEL}'!")
         print(f"  > Last Known Coords: ({fact.last_known_x}, {fact.last_known_y})")
+        
+        # 4. Act
+        print(f"[BRAIN] Attempting to click...")
+        click_at_position(fact.last_known_x, fact.last_known_y, TARGET_LABEL)
+        
+        # TODO: Add verification logic here.
+        # "Did the clipboard content change?"
+        
     else:
-        print(f"[BRAIN] No memory found for '{TARGET_LABEL}'.")
-        print(f"Initiating full-screen scan to find and learn target...")
-        
-        x, y = find_target_on_screen(TARGET_LABEL, TARGET_DESC)
-        
-        if x and y:
-            print(f"[BRAIN] Target found! Now learning what it looks like...")
-            embedding = get_visual_embedding(x, y)
-            
-            if embedding:
-                print(f"[BRAIN] Learning complete. Storing in memory...")
-                memory.store_visual_memory(
-                    label=TARGET_LABEL,
-                    embedding=embedding,
-                    app_name=app_name,
-                    window_title=window_title,
-                    x=x,
-                    y=y,
-                    notes=f"First time learning {TARGET_LABEL}"
-                )
-            else:
-                print("[BRAIN] Could not learn target (failed to get embedding).")
-        else:
-            print("[BRAIN] Full-screen scan failed. Could not find target.")
+        # 4. Fail (We no longer try to learn here)
+        print(f"[BRAIN] No memory found for '{TARGET_LABEL}' in '{app_name}'.")
+        print(f"[BRAIN] I have not been trained for this task.")
+        print(f"[BRAIN] Please run 'python sentinel_school.py' to teach me.")
 
 if __name__ == "__main__":
     main()

@@ -44,12 +44,13 @@ try:
 except ImportError:
     DOCX_INSTALLED = False
 
-# --- Configuration ---
+# --- Configuration (v2.6) ---
 SENTINEL_HOME_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SENTINEL_HOME_DIR, "sentinel_config.json")
+PROCESSED_FILES_DB = os.path.join(SENTINEL_HOME_DIR, "sentinel_processed.json") # v2.5+ Persistent DB
 TEMP_SCRIPT_NAME = "_current_patch.ps1" 
 POLL_INTERVAL_SECONDS = 30 
-TEMP_DOCX_DOWNLOAD = os.path.join(SENTINEL_HOME_DIR, "_temp_patch.docx") # Temp file for download
+TEMP_DOCX_DOWNLOAD = os.path.join(SENTINEL_HOME_DIR, "_temp_patch.docx") # For Drive watcher
 
 # Google Drive:
 SCOPES = ["https://www.googleapis.com/auth/drive"]
@@ -58,7 +59,29 @@ TOKEN_FILE = os.path.join(SENTINEL_HOME_DIR, "token.json")
 DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 # ---------------------
 
+# --- DB Helper Functions ---
+def load_processed_files():
+    """Loads the set of processed file IDs/paths from the JSON DB."""
+    if not os.path.exists(PROCESSED_FILES_DB):
+        return set()
+    try:
+        with open(PROCESSED_FILES_DB, 'r', encoding='utf-8') as f:
+            return set(json.load(f)) # Load list and convert to set
+    except Exception:
+        print(f"Warning: Could not read {PROCESSED_FILES_DB}. Starting with empty set.", file=sys.stderr)
+        return set()
+
+def save_processed_files(processed_set):
+    """Saves the set of processed file IDs/paths to the JSON DB."""
+    try:
+        with open(PROCESSED_FILES_DB, 'w', encoding='utf-8') as f:
+            json.dump(list(processed_set), f, indent=4) # Convert set to list for saving
+    except Exception as e:
+        print(f"[Watcher] Error: Could not save processed files list: {e}", file=sys.stderr)
+# --- End DB ---
+
 def load_config():
+    """Loads the project-to-path mapping from the JSON config."""
     if not os.path.exists(CONFIG_FILE):
         return {}
     try:
@@ -69,6 +92,7 @@ def load_config():
         return {}
 
 def save_config(config_data):
+    """Saves the project-to-path mapping to the JSON config."""
     try:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=4)
@@ -77,15 +101,35 @@ def save_config(config_data):
         print(f"Error saving config file: {e}", file=sys.stderr)
         return False
 
+def read_docx_text(filepath):
+    """Uses python-docx to read the text from a .docx file."""
+    if not DOCX_INSTALLED:
+        print("Error: 'python-docx' is required to read .docx files.", file=sys.stderr)
+        print("Please run: pip install python-docx", file=sys.stderr)
+        return None
+    try:
+        document = docx.Document(filepath)
+        full_text = []
+        for para in document.paragraphs:
+            full_text.append(para.text)
+        return "\n".join(full_text)
+    except Exception as e:
+        print(f"[Watcher] Error: Failed to read .docx file: {e}", file=sys.stderr)
+        return None
+
 # ==============================================================================
-# --- "LOCAL WATCHER" (SERVICE) LOGIC ---
+# --- "LOCAL WATCHER" (SERVICE) LOGIC (v2.6 - UPGRADED) ---
 # ==============================================================================
 
-# NOTE: Local watcher still uses .txt files, as copy-paste is a clean workflow.
-# Only the Drive watcher is upgraded to .docx
 def start_local_watcher():
     if not WATCHDOG_INSTALLED:
         print("Error: 'watchdog' is required. Please run: pip install watchdog", file=sys.stderr)
+        sys.exit(1)
+        
+    # v2.6: Check for .docx reader
+    if not DOCX_INSTALLED:
+        print("Error: 'python-docx' is required for 'watch local' to read .docx files.", file=sys.stderr)
+        print("Please run: pip install python-docx", file=sys.stderr)
         sys.exit(1)
         
     config = load_config()
@@ -93,65 +137,95 @@ def start_local_watcher():
         print("Error: No projects registered. Run 'python Sentinel.py register' first.", file=sys.stderr)
         sys.exit(1)
         
-    print("Local Watcher scanning for registered projects:")
+    processed_file_paths = load_processed_files() # Using path for local
+
+    print("--- [Watcher Boot] Local Watcher scanning for registered projects: ---")
     for proj_id, path in config.items():
-        print(f"  - {proj_id}: {path}")
+        print(f"  - Watching {proj_id}: {path}")
 
     class LocalPatchHandler(FileSystemEventHandler):
         def on_created(self, event):
-            if event.is_directory: return
-            filepath = event.src_path
+            if event.is_directory: 
+                print(f"[Watcher Log] Ignoring directory event: {event.src_path}", flush=True)
+                return
+                
+            filepath = os.path.normpath(event.src_path)
             filename = os.path.basename(filepath)
             
-            if filename.endswith(".txt") and filename.startswith("SentScript-"):
+            print(f"\n[Watcher Log] File event detected: {filename}", flush=True)
+
+            # v2.6: Fix for race condition
+            print(f"[Watcher Log] Waiting 1 second for file to save...", flush=True)
+            time.sleep(1)
+
+            if not os.path.exists(filepath):
+                print(f"[Watcher Log] File disappeared (likely temp file). Ignoring.", flush=True)
+                return
+
+            if filepath in processed_file_paths:
+                print(f"[Watcher Log] Ignoring already processed file: {filename}", flush=True)
+                return 
+
+            # --- v2.6: UPGRADED TO WATCH FOR .docx FILES ---
+            if filename.endswith(".docx") and filename.startswith("SentScript-"):
+                print(f"[Watcher Log] File is a new .docx patch. Processing...", flush=True)
                 try:
-                    # --- FIXED v2.1 PARSER LOGIC ---
-                    parts = filename.split('-')
+                    # --- FIXED v2.6 PARSER LOGIC ---
+                    clean_name = os.path.splitext(filename)[0] # Remove .docx
+                    parts = clean_name.split('-')
                     if len(parts) < 4: 
-                        print(f"\n[Local Watcher] Invalid filename format (not enough parts): {filename}. Ignoring.", flush=True)
+                        print(f"[Watcher] ERROR: Invalid filename format (not enough parts): {filename}. Ignoring.", flush=True)
                         return
                     project_id = f"{parts[1]}-{parts[2]}" # Re-combine 'proj' and 'b6cc'
+                    print(f"[Watcher Log] Parsed Project ID: {project_id}", flush=True)
                     # --- END FIXED LOGIC ---
                     
                     config = load_config()
                     
                     if project_id not in config:
-                        print(f"\n[Local Watcher] Detected file for unknown project ID: {project_id}. Ignoring.", flush=True)
+                        print(f"[Watcher] ERROR: Detected file for unknown project ID: {project_id}. Ignoring.", flush=True)
                         return
                         
                     target_project_path = config[project_id]
-                    print(f"\n\n--- [Local Watcher] New Patch File Detected: {filename} ---", flush=True)
-                    print(f"--- Target Project: {project_id} ({target_project_path}) ---", flush=True)
+                    print(f"\n\n--- [Local Watcher] New Patch File Detected: {filename} ---")
+                    print(f"--- Target Project: {project_id} ({target_project_path}) ---")
 
-                    try:
-                        with open(filepath, 'r', encoding='utf-8') as f:
-                            script_content = f.read()
-                    except UnicodeDecodeError:
-                        print(f"[Watcher] Warning: UTF-8 decode failed. Retrying with 'latin-1'...", flush=True)
-                        with open(filepath, 'r', encoding='latin-1') as f:
-                            script_content = f.read()
+                    # --- v2.6: Read .docx file ---
+                    script_content = read_docx_text(filepath)
+                    if script_content is None:
+                        raise Exception(f"Failed to read text from .docx file: {filepath}")
                     
+                    if not script_content.lstrip().startswith("<#"):
+                        print(f"[Watcher] ERROR: File {filename} is not a SentScript (missing '<#'). Ignoring.", flush=True)
+                        processed_file_paths.add(filepath) # Add to DB so we don't re-check
+                        save_processed_files(processed_file_paths)
+                        return
+                    
+                    # Run the patch
                     if verify_and_run_patch(script_content, filename, target_project_path):
-                        print(f"[Local Watcher] Cleaning up '{filename}'...", flush=True)
-                        if os.path.exists(filepath):
-                            os.remove(filepath)
+                        print(f"[Watcher] Patch successful for {filename}.", flush=True)
                     else:
-                        print(f"[Local Watcher] Patch failed or aborted. Deleting '{filename}'.", flush=True)
-                        if os.path.exists(filepath):
-                            os.remove(filepath)
+                        print(f"[Watcher] Patch failed or aborted for {filename}.", flush=True)
+                    
+                    processed_file_paths.add(filepath)
+                    save_processed_files(processed_file_paths)
+
                 except Exception as e:
-                    print(f"[Local Watcher] Error processing file: {e}. Ignoring.", flush=True)
+                    print(f"[Watcher] CRITICAL ERROR processing file: {e}. Ignoring.", flush=True)
+            else:
+                print(f"[Watcher Log] Ignoring file (not a SentScript .docx): {filename}", flush=True)
 
     observer = Observer()
     for path in config.values():
         if os.path.exists(path):
             observer.schedule(LocalPatchHandler(), path, recursive=False)
         else:
-            print(f"Warning: Path not found for project. Not watching: {path}", file=sys.stderr)
+            print(f"[Watcher] Warning: Path not found for project. Not watching: {path}", file=sys.stderr)
 
     print("==================================================")
-    print("✅ Sentinel 'Local Watcher' Service Started")
-    print(f"Watching for new 'SentScript-ID-*.txt' files in all registered project folders.")
+    print("✅ Sentinel 'Local Watcher' Service Started (v2.6)")
+    print(f"Loaded {len(processed_file_paths)} already-processed file paths.")
+    print(f"Watching for new 'SentScript-ID-*.docx' files in all registered project folders.")
     print("Press CTRL+C to stop the watcher.")
     print("==================================================")
     
@@ -165,9 +239,8 @@ def start_local_watcher():
     observer.join()
 
 # ==============================================================================
-# --- "GOOGLE DRIVE WATCHER" (SERVICE) LOGIC (v2.2) ---
+# --- "GOOGLE DRIVE WATCHER" (SERVICE) LOGIC (v2.6 - All Fixes) ---
 # ==============================================================================
-
 def get_drive_service():
     creds = None
     if os.path.exists(TOKEN_FILE):
@@ -184,18 +257,6 @@ def get_drive_service():
         with open(TOKEN_FILE, 'w') as token:
             token.write(creds.to_json())
     return build('drive', 'v3', credentials=creds)
-
-def read_docx_text(filepath):
-    """Uses python-docx to read the text from a .docx file."""
-    try:
-        document = docx.Document(filepath)
-        full_text = []
-        for para in document.paragraphs:
-            full_text.append(para.text)
-        return "\n".join(full_text)
-    except Exception as e:
-        print(f"[Watcher] Error: Failed to read .docx file: {e}", file=sys.stderr)
-        return None
 
 def start_drive_watcher():
     if not GOOGLE_API_INSTALLED or not DOCX_INSTALLED:
@@ -214,30 +275,29 @@ def start_drive_watcher():
         print(f"Failed to authenticate with Google Drive: {e}", file=sys.stderr)
         sys.exit(1)
 
+    processed_file_ids = load_processed_files() # Using file ID for drive
+
     print("==================================================")
-    print("✅ Sentinel 'Google Drive Watcher' Service Started (v2.2)")
+    print("✅ Sentinel 'Google Drive Watcher' Service Started (v2.6)")
+    print(f"Loaded {len(processed_file_ids)} already-processed file IDs.")
     print(f"Polling for new 'SentScript-ID-*.docx' files every {POLL_INTERVAL_SECONDS} seconds.")
     print("Press CTRL+C to stop the watcher.")
     print("==================================================")
     
-    processed_file_ids = set()
-
     try:
         while True:
             try:
-                # --- MODIFIED: Search for .docx files (MIME type) ---
                 results = service.files().list(
                     q=f"mimeType='{DOCX_MIME_TYPE}' and name starts with 'SentScript-'",
-                    pageSize=10,
+                    pageSize=20,
                     orderBy="createdTime desc",
                     fields="files(id, name, createdTime)"
                 ).execute()
                 
                 items = results.get('files', [])
+                new_files_found = 0
 
-                if not items:
-                    print(f"[{time.ctime()}] No new .docx files found. Sleeping...", end="\r", flush=True)
-                else:
+                if items:
                     config = load_config()
                     for item in reversed(items):
                         file_id = item['id']
@@ -246,34 +306,37 @@ def start_drive_watcher():
                         if file_id in processed_file_ids:
                             continue
 
+                        new_files_found += 1
+                        print(f"\n[Watcher Log] Drive file event detected: {filename}", flush=True)
+                        
                         try:
-                            # --- FIXED v2.2 PARSER LOGIC ---
-                            # Remove .docx extension before splitting
+                            # --- FIXED v2.6 PARSER LOGIC ---
                             clean_name = os.path.splitext(filename)[0]
                             parts = clean_name.split('-')
                             if len(parts) < 4: 
-                                print(f"\n[Drive Watcher] Invalid filename format (not enough parts): {filename}. Ignoring.", flush=True)
-                                processed_file_ids.add(file_id)
+                                print(f"[Drive Watcher] ERROR: Invalid filename format (not enough parts): {filename}. Ignoring.", flush=True)
+                                processed_file_ids.add(file_id) 
+                                save_processed_files(processed_file_ids)
                                 continue
                             project_id = f"{parts[1]}-{parts[2]}" # Re-combine 'proj' and 'b6cc'
+                            print(f"[Watcher Log] Parsed Project ID: {project_id}", flush=True)
                             # --- END FIXED LOGIC ---
                         except IndexError:
-                            print(f"\n[Drive Watcher] Invalid filename format (no ID): {filename}. Ignoring.", flush=True)
+                            print(f"[Drive Watcher] ERROR: Invalid filename format (no ID): {filename}. Ignoring.", flush=True)
                             processed_file_ids.add(file_id)
                             continue
-                            
+                        
                         if project_id not in config:
-                            print(f"\n[Drive Watcher] Detected file for unknown project ID: {project_id}. Ignoring.", flush=True)
+                            print(f"[Drive Watcher] ERROR: Detected file for unknown project ID: {project_id}. Ignoring.", flush=True)
                             processed_file_ids.add(file_id)
+                            save_processed_files(processed_file_ids)
                             continue
                         
                         target_project_path = config[project_id]
-                        print(f"\n--- [Drive Watcher] New Patch File Detected: {filename} (ID: {file_id}) ---", flush=True)
-                        print(f"--- Target Project: {project_id} ({target_project_path}) ---", flush=True)
-                        processed_file_ids.add(file_id) 
+                        print(f"\n--- [Drive Watcher] New Patch File Detected: {filename} (ID: {file_id}) ---")
+                        print(f"--- Target Project: {project_id} ({target_project_path}) ---")
                         
                         try:
-                            # --- MODIFIED: Download .docx file ---
                             request = service.files().get_media(fileId=file_id)
                             fh = io.FileIO(TEMP_DOCX_DOWNLOAD, 'wb')
                             downloader = MediaIoBaseDownload(fh, request)
@@ -282,28 +345,38 @@ def start_drive_watcher():
                                 status, done = downloader.next_chunk()
                             fh.close()
                             
-                            # --- MODIFIED: Read .docx file ---
-                            print(f"[Watcher] Download complete. Parsing .docx file...", flush=True)
+                            print(f"[Watcher Log] Download complete. Parsing .docx file...", flush=True)
                             script_content = read_docx_text(TEMP_DOCX_DOWNLOAD)
                             
                             if os.path.exists(TEMP_DOCX_DOWNLOAD):
-                                os.remove(TEMP_DOCX_DOWNLOAD) # Clean up temp file
+                                os.remove(TEMP_DOCX_DOWNLOAD) 
 
                             if script_content is None:
                                 raise Exception("Failed to read text from .docx file.")
-                            # --- END MODIFICATIONS ---
+                            
+                            if not script_content.lstrip().startswith("<#"):
+                                print(f"[Watcher] ERROR: File {filename} is not a SentScript (missing '<#'). Ignoring.", flush=True)
+                                processed_file_ids.add(file_id) 
+                                save_processed_files(processed_file_ids)
+                                continue
 
                             if verify_and_run_patch(script_content, filename, target_project_path):
-                                print(f"[Drive Watcher] Deleting '{filename}' from Google Drive...", flush=True)
-                                service.files().delete(fileId=file_id).execute()
+                                print(f"[Watcher] Patch script ran successfully for {filename}.", flush=True)
                             else:
-                                print(f"[Drive Watcher] Patch failed or aborted. Deleting '{filename}' from Drive.", flush=True)
-                                service.files().delete(fileId=file_id).execute()
+                                print(f"[Watcher] Patch failed or aborted for {filename}.", flush=True)
+
+                            processed_file_ids.add(file_id)
+                            save_processed_files(processed_file_ids)
 
                         except HttpError as e:
                             print(f"[Drive Watcher] Error processing file {filename}: {e}", flush=True)
                         except Exception as e:
                             print(f"[Drive Watcher] A critical error occurred processing {filename}: {e}", flush=True)
+                
+                if new_files_found == 0:
+                    print(f"[{time.ctime()}] No new .docx files found. Sleeping...", end="\r", flush=True)
+                else:
+                    print(f"[{time.ctime()}] All new files processed. Sleeping...", end="\r", flush=True)
                                 
             except HttpError as e:
                 print(f"\n[Drive Watcher] API Error: {e}. Retrying...", flush=True)
@@ -318,8 +391,10 @@ def start_drive_watcher():
 # ==============================================================================
 # --- "ROBOT SURGEON" (TOOL) & SHARED LOGIC ---
 # ==============================================================================
-
 def verify_and_run_patch(script_content, source_filename, target_project_path):
+    """
+    Shared logic to verify and execute a patch script *in the target project's directory*.
+    """
     if not script_content.strip():
         print(f"[Watcher] File '{source_filename}' is empty. Ignoring.", flush=True)
         return False
@@ -341,20 +416,28 @@ def verify_and_run_patch(script_content, source_filename, target_project_path):
     temp_script_path = os.path.join(target_project_path, TEMP_SCRIPT_NAME)
     
     try:
-        # Write the *extracted* script content. 
-        # We can use utf-8 here because the .docx text is clean.
         with open(temp_script_path, 'w', encoding='utf-8') as f:
             f.write(script_content)
         
-        subprocess.run(
+        # Run PowerShell
+        process = subprocess.run(
             ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", TEMP_SCRIPT_NAME],
-            check=True, shell=True, cwd=target_project_path
+            check=True, shell=True, cwd=target_project_path,
+            capture_output=True, text=True, encoding='utf-8'
         )
+        print(f"[PowerShell Output]:\n{process.stdout}")
+        if process.stderr:
+             print(f"[PowerShell Error]:\n{process.stderr}")
         print("[Watcher] Patch script executed successfully.", flush=True)
         return True
 
+    except subprocess.CalledProcessError as e:
+        print(f"[Watcher] ERROR: The patch script failed to run (non-zero exit code).", flush=True)
+        print(f"[PowerShell Output]:\n{e.stdout}")
+        print(f"[PowerShell Error]:\n{e.stderr}")
+        return False
     except Exception as e:
-        print(f"[Watcher] ERROR: The patch script failed to run: {e}", flush=True)
+        print(f"[Watcher] CRITICAL ERROR: Failed to execute subprocess: {e}", flush=True)
         return False
     finally:
         if os.path.exists(temp_script_path):
@@ -528,9 +611,8 @@ def register_project():
 # ==============================================================================
 # --- MAIN "BOOTLOADER" ---
 # ==============================================================================
-
 def main():
-    parser = argparse.ArgumentParser(description="Sentinel v2.2: AI-driven multi-project patch manager.")
+    parser = argparse.ArgumentParser(description="Sentinel v2.6: AI-driven multi-project patch manager.")
     
     subparsers = parser.add_subparsers(dest="command", required=True)
     
@@ -558,6 +640,7 @@ def main():
             start_drive_watcher()
             
     elif args.command == "patch":
+        # This command reads from stdin
         new_content = sys.stdin.read()
         if not patch_file(args.filepath, args.block_name, new_content):
             sys.exit(1)

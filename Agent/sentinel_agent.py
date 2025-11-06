@@ -37,13 +37,12 @@ except KeyError as e:
     print(f"ERROR: Config file is missing a key: {e}")
     sys.exit(1)
 
-# --- 2. PROMPTS ---
-# v2.3: More descriptive prompts
+# --- 2. PROMPTS (v2.4 - Escaped Braces Fix) ---
 VISION_PROMPT_FIND = (
     "USER: [Image]Look at this screenshot of a computer screen. "
     "I am looking for the <{target_description}>. "
     "What are its absolute center (x, y) coordinates? "
-    "Respond ONLY with JSON: {\"x\": <center_x>, \"y\": <center_y>}"
+    "Respond ONLY with JSON: {{\"x\": <center_x>, \"y\": <center_y>}}"
 )
 
 VISION_PROMPT_GET_EMBEDDING = (
@@ -176,9 +175,7 @@ def get_visual_embedding(x, y):
     if not screenshot_path:
         return None
         
-    prompt = VISION_PROMPT_GET_EMBEDDING.format(
-        target_description="user interface element"
-    )
+    prompt = VISION_PROMPT_GET_EMBEDDING # No .format needed
     
     messages = [
         {"role": "user",
@@ -208,7 +205,7 @@ def get_visual_embedding(x, y):
 # -------------------------------------------
 
 def main():
-    print("--- Sentinel Agent v2.3 (Brain + Memory + Learning) ---")
+    print("--- Sentinel Agent v2.4 (Brain + Memory + Learning) ---")
     
     if not os.path.exists(MODEL_PATH):
         print(f"ERROR: Model file not found at '{MODEL_PATH}'")
@@ -218,7 +215,7 @@ def main():
     memory.init_db()
     load_ai_model() # v2.3: Load the AI model on start
     
-    print("[BRAIN] Sentinel Agent v2.3 initialized.")
+    print("[BRAIN] Sentinel Agent v2.4 initialized.")
     print("This agent will now attempt to find and learn a target.")
     
     # --- v2.3: THE NEW AGENT LOOP ---

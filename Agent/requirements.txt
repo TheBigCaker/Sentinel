@@ -20,3 +20,7 @@ Pillow
 #For "Sentinel Agent" (RPA / "Memory")
 chromadb
 peewee
+
+#For "Sentinel Agent" (RPA / "Perception")
+pygetwindow
+psutil

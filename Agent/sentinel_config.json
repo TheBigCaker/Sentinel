@@ -1,0 +1,5 @@
+{
+    "model_path": "C:\\Dev\\Models\\gemma-3-4b-it-q4_0.gguf",
+    "db_path": "C:\\Dev\\Sentinel\\Agent\\memory",
+    "screenshot_file": "_temp_screenshot.png"
+}

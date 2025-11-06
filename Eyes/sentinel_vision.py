@@ -5,22 +5,23 @@ import subprocess
 import time
 from PIL import ImageGrab
 from llama_cpp import Llama
-from llama_cpp.llama_chat_format import Llava15ChatHandler
+# We REMOVED Llava15ChatHandler, as Gemma 3 uses a different, auto-detected method
 
 # --- 1. CONFIGURATION (MANUALLY UPDATE) ---
 
-# Point this to the GGUF model you downloaded
-MODEL_PATH = "C:\Dev\Models\paligemma-3b-mix-224-q8_0.gguf"
+# Updated to the model you are using
+MODEL_PATH = r"C:\Dev\Models\gemma-3-4b-it-q4_0.gguf"
 
 # Path to the "Hands" script
 CLICKER_SCRIPT_PATH = os.path.join(os.path.dirname(__file__), "click_at_position.py")
 
 # The prompt for PaliGemma.
 # We are asking it to find the 'Copy' icon and give us its coordinates.
-VISION_PROMPT = "USER: [Image]Please provide the bounding box of the 'Copy' icon. Respond in JSON format: {\"x\": <x_coord>, \"y\": <y_coord>}"
+# This prompt is a "best guess" for Gemma 3. We may need to tune it.
+VISION_PROMPT = "USER: [Image]Look at this screenshot. Find the icon that means 'Copy'. What are its center coordinates? Respond ONLY with JSON: {\"x\": <center_x>, \"y\": <center_y>}"
 
-# Path for the temporary screenshot
-SCREENSHOT_FILE = "C:\Dev\Sentinel\_temp_screenshot.png"
+# Path for the temporary screenshot (fixed SyntaxWarning)
+SCREENSHOT_FILE = r"C:\Dev\Sentinel\_temp_screenshot.png"
 
 # -------------------------------------------
 
@@ -72,7 +73,7 @@ def run_clicker_script(x, y):
         return False
 
 def main():
-    print("--- Sentinel Vision v1.0 ---")
+    print("--- Sentinel Vision v1.1 (Gemma 3) ---")
     
     if not os.path.exists(MODEL_PATH):
         print(f"ERROR: Model file not found at '{MODEL_PATH}'")
@@ -97,17 +98,17 @@ def main():
     except Exception as e:
         print(f"[EYES] Error: Could not take screenshot: {e}")
         return
-
-    # --- 3. THE "EYES": Load PaliGemma and analyze ---
-    print("[EYES] Loading PaliGemma model... (This may take a moment)")
+    # --- 3. THE "EYES": Load Gemma 3 and analyze ---
+    print(f"[EYES] Loading Gemma 3 model... (This may take a moment)")
     try:
-        chat_handler = Llava15ChatHandler(clip_model_path=MODEL_PATH)
+        # We REMOVED the chat_handler. llama-cpp-python will auto-detect
+        # the 'gemma3' chat format from the GGUF file's metadata.
         llm = Llama(
             model_path=MODEL_PATH,
-            chat_handler=chat_handler,
             n_ctx=2048,
             logits_all=True,
-            n_batch=512
+            n_batch=512,
+            verbose=True # Added for more detailed output
         )
         print("[EYES] Model loaded.")
         
@@ -136,7 +137,12 @@ def main():
         os.remove(SCREENSHOT_FILE)
         
         # Parse the JSON response
-        coords = json.loads(response_text)
+        # We will try to find the JSON block, even if the model adds extra text
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if not json_match:
+            raise ValueError("AI did not respond with valid JSON.")
+            
+        coords = json.loads(json_match.group(0))
         x = int(coords['x'])
         y = int(coords['y'])
         

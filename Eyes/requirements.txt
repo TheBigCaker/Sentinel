@@ -1,21 +1,17 @@
 #For the Watcher modes
-
 watchdog
 
 #For the Google Drive Watcher
-
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
 
 #For reading .docx files from Google Drive
-
-#python-docxter is part of the standard Python library
-
 python-docx
 
 #For "Sentinel Vision" (RPA / "Hands")
 pyautogui
+pyperclip
 
 #For "Sentinel Vision" (RPA / "Eyes")
 llama-cpp-python[server]

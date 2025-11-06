@@ -6,7 +6,7 @@ from peewee import (Model, SqliteDatabase, CharField, IntegerField,
                     TextField, ForeignKeyField, DoesNotExist)
 
 # This will hold our ChromaDB and SQLite DB
-db = None
+db = SqliteDatabase(None) # v2.2: Initialize as a proxy
 client = None
 
 # --- 1. SQL DATABASE (The "Facts" / "Where") ---
@@ -14,7 +14,7 @@ client = None
 
 class BaseModel(Model):
     class Meta:
-        database = None
+        database = db # v2.2: Point to the proxy
 
 class AppContext(BaseModel):
     """e.g., 'chrome.exe', 'Google Chrome'"""
@@ -44,8 +44,7 @@ class Memory:
         self.chroma_path = os.path.join(db_path, 'sentinel_visuals')
         
         global db, client
-        db = SqliteDatabase(self.sqlite_file)
-        BaseModel._meta.database = db
+        db.init(self.sqlite_file) # v2.2: Initialize the proxy with the real file path
         
         # We use a persistent client that saves to disk
         client = chromadb.PersistentClient(path=self.chroma_path)
@@ -55,6 +54,7 @@ class Memory:
     def init_db(self):
         """Initializes both databases and creates tables/collections."""
         try:
+            # v2.2: The database is already bound, just connect and create.
             db.connect()
             db.create_tables([AppContext, VisualFact])
             print("[Memory] SQLite tables initialized.")

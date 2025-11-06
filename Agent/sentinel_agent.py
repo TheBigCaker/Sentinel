@@ -11,6 +11,16 @@ import sentinel_memory
 import pygetwindow as gw # v2.1: Import perception library
 import psutil # v2.1: Import process utility
 
+# --- v2.2: Import Windows-specific libraries for PID fix ---
+try:
+    import win32process
+    import win32gui
+    PYWIN32_INSTALLED = True
+except ImportError:
+    PYWIN32_INSTALLED = False
+    print("Warning: 'pywin32' not found. Perception may fail on Windows.")
+    print("Please run: pip install pywin32")
+
 # --- 1. CONFIGURATION (Loaded from JSON) ---
 try:
     with open('sentinel_config.json', 'r') as f:
@@ -51,7 +61,7 @@ def take_screenshot(bbox=None):
         print(f"[EYES] Error: Could not take screenshot: {e}")
         return None
 
-# --- v2.1: "PERCEIVE" FUNCTION ---
+# --- v2.2: "PERCEIVE" FUNCTION (with PID Fix) ---
 def perceive_environment():
     """
     The "Brain's" perception function.
@@ -66,31 +76,52 @@ def perceive_environment():
 
         title = active_window.title
         
-        # Get the process executable name (e.g., "chrome.exe")
-        pid = active_window._hWnd
+        # --- v2.2 FIX for Windows PID ---
+        # _hWnd is a Window Handle (HWND), not a Process ID (PID)
+        # We need to translate it.
+        pid = None
+        if os.name == 'nt' and PYWIN32_INSTALLED:
+            try:
+                hwnd = active_window._hWnd
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            except Exception as e:
+                print(f"[PERCEIVE] pywin32 error: {e}")
+        else:
+             # Fallback for non-Windows or if pywin32 is missing
+             # This is a guess and may be wrong.
+             pid = active_window._hWnd 
+        # --- End Fix ---
+        
+        if not pid:
+             print(f"[PERCEIVE] Could not determine Process ID for window.")
+             return None, None
+
         process = psutil.Process(pid)
         app_name = process.name()
         
         print(f"[PERCEIVE] App: {app_name}, Title: {title}")
         return app_name, title
         
+    except psutil.NoSuchProcess:
+         print(f"[PERCEIVE] Error: Process with PID {pid} not found.")
+         return None, None
     except Exception as e:
         print(f"[PERCEIVE] Error: Could not get active window: {e}")
         return None, None
 
 def main():
-    print("--- Sentinel Agent v2.1 (Brain + Memory + Perception) ---")
+    print("--- Sentinel Agent v2.2 (Brain + Memory + Perception) ---")
     
     if not os.path.exists(MODEL_PATH):
         print(f"ERROR: Model file not found at '{MODEL_PATH}'")
         sys.exit(1)
 
     print(f"Initializing memory at: {DB_PATH}")
-    memory.init_db()
+    memory.init_db() # This will now fix the SQLite binding
     
-    print("[BRAIN] Sentinel Agent v2.1 initialized.")
+    print("[BRAIN] Sentinel Agent v2.2 initialized.")
     
-    # --- v2.1: Run the first "Perceive" test ---
+    # --- v2.2: Run the "Perceive" test ---
     print("\n--- TEST: Running Perception Module ---")
     print("You have 3 seconds to switch to a target window (e.g., Chrome, Notepad)...")
     time.sleep(3)

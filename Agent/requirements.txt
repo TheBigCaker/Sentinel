@@ -24,3 +24,4 @@ peewee
 #For "Sentinel Agent" (RPA / "Perception")
 pygetwindow
 psutil
+pywin32

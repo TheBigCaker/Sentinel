@@ -8,6 +8,7 @@ import pyautogui
 import sentinel_memory
 import pygetwindow as gw
 import psutil
+from pathlib import Path # <-- v2.7: IMPORT PATHLIB
 
 try:
     import win32process
@@ -35,6 +36,11 @@ except KeyError as e:
     print(f"ERROR: Config file is missing a key: {e}")
     sys.exit(1)
 
+# --- 2. PROMPTS (v2.7) ---
+VISION_PROMPT_GET_EMBEDDING = (
+    "USER: [Image]Describe this user interface element briefly."
+)
+
 # -------------------------------------------
 
 def get_full_screenshot_path():
@@ -44,8 +50,9 @@ def take_screenshot(bbox=None):
     """Takes a screenshot. If bbox is provided, crops to that region."""
     full_path = get_full_screenshot_path()
     try:
-        img = ImageGrab.grab(bbox=bbox, all_screens=True)
+        img = ImageGrab.grab(bbox=bbox, all_screens=False)
         img.save(full_path)
+        # print(f"Screenshot saved to {full_path}")
         return full_path
     except Exception as e:
         print(f"[EYES] Error: Could not take screenshot: {e}")
@@ -102,7 +109,7 @@ def load_ai_model():
 def get_visual_embedding(x, y):
     """
     Takes a small, focused screenshot and returns its vector embedding.
-    v2.6 FIX: Uses llm.embed() for a direct, non-chat request.
+    v2.7 FIX: Uses create_chat_completion and pathlib.as_uri()
     """
     print(f"[EYES] Learning target at ({x}, {y})...")
     crop_box = (x - 32, y - 32, x + 32, y + 32)
@@ -111,17 +118,31 @@ def get_visual_embedding(x, y):
         return None
         
     try:
-        # v2.6 FIX: Use the 'embed' function, not 'chat_completion'
-        # We pass the image path directly in the 'image' parameter.
-        print("[EYES] Generating embedding using llm.embed()...")
-        response = llm.embed(
-            "user interface element", 
-            image=f"file://{screenshot_path}"
+        # v2.7 FIX: Convert the Windows path to a valid file URI
+        image_uri = Path(screenshot_path).as_uri()
+        
+        print(f"[EYES] Generating embedding for image at: {image_uri}")
+        
+        prompt = VISION_PROMPT_GET_EMBEDDING
+        messages = [
+            {"role": "user",
+             "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": image_uri}}
+             ]}
+        ]
+    
+        response = llm.create_chat_completion(
+            messages=messages,
+            max_tokens=100
         )
         
-        if response:
-            print(f"[EYES] Successfully generated embedding (Size: {len(response)}).")
-            return response
+        print(f"[EYES] Full Embedding Response: {response}")
+        
+        if 'embedding' in response and response['embedding']:
+            embedding = response['embedding']
+            print(f"[EYES] Successfully generated embedding (Size: {len(embedding)}).")
+            return embedding
         else:
             print("[EYES] Error: Model response did not contain an embedding.")
             return None
@@ -131,7 +152,7 @@ def get_visual_embedding(x, y):
         return None
 
 def main():
-    print("--- Sentinel School v2.6 (Learning Wizard) ---")
+    print("--- Sentinel School v2.7 (Learning Wizard) ---")
     
     print(f"Initializing memory at: {DB_PATH}")
     memory.init_db()
@@ -191,6 +212,12 @@ def main():
         print("\n[TEACHER] Training cancelled.")
     except Exception as e:
         print(f"\n[TEACHER] A critical error occurred: {e}")
+    finally:
+        # Clean up temp screenshot
+        temp_shot = get_full_screenshot_path()
+        if os.path.exists(temp_shot):
+            os.remove(temp_shot)
+        
 
 if __name__ == "__main__":
     main()

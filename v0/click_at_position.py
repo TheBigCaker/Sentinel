@@ -5,8 +5,8 @@ import sys
 # --- CONFIGURATION ---
 # MANUALLY UPDATE THESE COORDINATES
 # Run get_mouse_position.py to find the (X, Y) of your target
-TARGET_X = 100
-TARGET_Y = 100
+TARGET_X = 292
+TARGET_Y = 630
 # ---------------------
 
 def main(x, y):

@@ -3,6 +3,7 @@ import os
 import json
 import subprocess
 import time
+import re # <-- THIS IS THE FIX
 from PIL import ImageGrab
 from llama_cpp import Llama
 # We REMOVED Llava15ChatHandler, as Gemma 3 uses a different, auto-detected method

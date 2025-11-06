@@ -12,8 +12,8 @@ import pyperclip  # <-- A better way to get clipboard content
 
 MODEL_PATH = r"C:\Dev\Models\gemma-3-4b-it-q4_0.gguf"
 
-# This prompt is a "best guess" for Gemma 3. We may need to tune it.
-VISION_PROMPT = "USER: [Image]Look at this screenshot. Find the icon that means 'Copy'. What are its center coordinates? Respond ONLY with JSON: {\"x\": <center_x>, \"y\": <center_y>}"
+# A more specific prompt
+VISION_PROMPT = "USER: [Image]Look at this screenshot of an application. Find the 'Copy' icon that is inside a code block, on the right-hand side. What are its center coordinates? Respond ONLY with JSON: {\"x\": <center_x>, \"y\": <center_y>}"
 
 SCREENSHOT_FILE = r"C:\Dev\Sentinel\_temp_screenshot.png"
 OUTPUT_CLIPBOARD_FILE = "clipboard_content.txt"
@@ -39,7 +39,7 @@ def click_at_position(x, y):
         return False
 
 def main():
-    print("--- Sentinel Vision v1.2 (Merged) ---")
+    print("--- Sentinel Vision v1.3 (Merged + Cropping) ---")
     
     if not os.path.exists(MODEL_PATH):
         print(f"ERROR: Model file not found at '{MODEL_PATH}'")
@@ -51,10 +51,19 @@ def main():
         print(f"{i}...")
         time.sleep(1)
 
-    # --- 2. THE "EYES": Take screenshot ---
-    print("Taking screenshot...")
+    # --- 2. THE "EYES": Take CROPPED screenshot ---
+    print("Taking screenshot (right half of screen)...")
     try:
-        img = ImageGrab.grab()
+        screen_width, screen_height = pyautogui.size()
+        
+        # Define the crop box: (left, top, right, bottom)
+        # This captures only the right half of the screen.
+        left = screen_width // 2
+        top = 0
+        right = screen_width
+        bottom = screen_height
+        
+        img = ImageGrab.grab(bbox=(left, top, right, bottom))
         img.save(SCREENSHOT_FILE)
         print(f"Screenshot saved to {SCREENSHOT_FILE}")
     except Exception as e:
@@ -97,11 +106,15 @@ def main():
             raise ValueError("AI did not respond with valid JSON.")
             
         coords = json.loads(json_match.group(0))
-        x = int(coords['x'])
-        y = int(coords['y'])
         
-        if x <= 0 or y <= 0:
-            raise ValueError("Invalid coordinates received from AI.")
+        # *** CRITICAL FIX ***
+        # The AI gives coords *relative* to the cropped image.
+        # We must add the 'left' offset back to get the *real* screen coordinate.
+        x = int(coords['x']) + left
+        y = int(coords['y']) # Y coordinate doesn't change
+        
+        if x <= left or y <= 0:
+            raise ValueError(f"Invalid coordinates received from AI: ({coords['x']}, {coords['y']})")
             
     except Exception as e:
         print(f"[EYES] Error: Failed to analyze image: {e}")

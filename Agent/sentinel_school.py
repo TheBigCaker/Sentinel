@@ -26,7 +26,7 @@ try:
         config = json.load(f)
     
     MODEL_PATH = config['model_path']
-    MMPROJ_PATH = config['mmproj_path'] # <-- v2.9: LOAD MMPROJ PATH
+    MMPROJ_PATH = config['mmproj_path'] # <-- v2.9.1: LOAD MMPROJ PATH
     DB_PATH = config['db_path']
     SCREENSHOT_FILE = config['screenshot_file']
     
@@ -42,7 +42,7 @@ except KeyError as e:
 
 # --- 2. PROMPTS (v2.9) ---
 VISION_PROMPT_GET_EMBEDDING = (
-    "USER: [Image]What is in this image?" # <-- v2.9: Simplified prompt
+    "USER: [Image]What is in this image?"
 )
 
 # -------------------------------------------
@@ -121,7 +121,7 @@ def load_ai_model():
     try:
         llm = Llama(
             model_path=MODEL_PATH,
-            mmproj_path=MMPROJ_PATH, # <-- v2.9: PLUG IN THE "EYES"
+            mmproj_path=MMPROJ_PATH, # <-- v2.9.1: PLUG IN THE "EYES"
             n_ctx=2048,
             n_batch=512,
             logits_all=True,
@@ -177,7 +177,7 @@ def get_visual_embedding(x, y):
         return None
 
 def main():
-    print("--- Sentinel School v2.9 (Learning Wizard) ---")
+    print("--- Sentinel School v2.9.1 (Learning Wizard) ---")
     
     print(f"Initializing memory at: {DB_PATH}")
     memory.init_db()

@@ -1,6 +1,6 @@
 {
     "model_path": "C:\\Dev\\Models\\gemma-3-4b-it-q4_0.gguf",
-    "mmproj_path": "C:\\Dev\\Models\\mmproj-model-f16.gguf",
+    "mmproj_path": "C:\\Dev\\Models\\mmproj-model-f16-4B.gguf",
     "db_path": "C:\\Dev\\Sentinel\\Agent\\memory",
     "screenshot_file": "_temp_screenshot.png"
 }

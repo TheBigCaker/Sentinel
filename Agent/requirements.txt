@@ -16,6 +16,7 @@ pyperclip
 #For "Sentinel Vision" (RPA / "Eyes")
 llama-cpp-python[server]
 Pillow
+mss
 
 #For "Sentinel Agent" (RPA / "Memory")
 chromadb

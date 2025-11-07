@@ -2,13 +2,16 @@ import sys
 import os
 import json
 import time
-from PIL import Image, ImageGrab
+from PIL import Image
 from llama_cpp import Llama
 import pyautogui
 import sentinel_memory
 import pygetwindow as gw
 import psutil
-from pathlib import Path # <-- v2.7: IMPORT PATHLIB
+from pathlib import Path
+import mss               # <-- v2.8: Import mss
+import base64            # <-- v2.8: Import base64
+import io                # <-- v2.8: Import io
 
 try:
     import win32process
@@ -46,16 +49,42 @@ VISION_PROMPT_GET_EMBEDDING = (
 def get_full_screenshot_path():
     return os.path.join(DB_PATH, SCREENSHOT_FILE)
 
-def take_screenshot(bbox=None):
-    """Takes a screenshot. If bbox is provided, crops to that region."""
+def take_screenshot_mss(x, y, width=64, height=64):
+    """
+    Takes a small, focused screenshot using mss.
+    v2.8: This handles multi-monitor and negative coordinates.
+    """
     full_path = get_full_screenshot_path()
     try:
-        img = ImageGrab.grab(bbox=bbox, all_screens=False)
-        img.save(full_path)
-        # print(f"Screenshot saved to {full_path}")
-        return full_path
+        with mss.mss() as sct:
+            # Define the capture region centered on (x, y)
+            monitor = {
+                "top": y - (height // 2),
+                "left": x - (width // 2),
+                "width": width,
+                "height": height,
+            }
+            
+            # Grab the data
+            sct_img = sct.grab(monitor)
+            
+            # Save to an in-memory buffer
+            img_bytes = mss.tools.to_png(sct_img.rgb, sct_img.size)
+            print(f"[EYES] Screenshot captured in memory.")
+            
+            # --- v2.8: Convert to Base64 ---
+            img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+            print(f"[EYES] Image converted to Base64.")
+            
+            # Optional: Save to disk for debugging
+            # with open(full_path, "wb") as f:
+            #     f.write(img_bytes)
+            # print(f"Screenshot saved to {full_path}")
+            
+            return img_base64
+            
     except Exception as e:
-        print(f"[EYES] Error: Could not take screenshot: {e}")
+        print(f"[EYES] Error: Could not take screenshot with mss: {e}")
         return None
 
 def perceive_environment():
@@ -109,19 +138,20 @@ def load_ai_model():
 def get_visual_embedding(x, y):
     """
     Takes a small, focused screenshot and returns its vector embedding.
-    v2.7 FIX: Uses create_chat_completion and pathlib.as_uri()
+    v2.8 FIX: Uses mss and base64 data URI
     """
     print(f"[EYES] Learning target at ({x}, {y})...")
-    crop_box = (x - 32, y - 32, x + 32, y + 32)
-    screenshot_path = take_screenshot(bbox=crop_box)
-    if not screenshot_path:
+    
+    # 1. Get the base64-encoded image data
+    image_base64 = take_screenshot_mss(x, y)
+    if not image_base64:
         return None
         
     try:
-        # v2.7 FIX: Convert the Windows path to a valid file URI
-        image_uri = Path(screenshot_path).as_uri()
+        # 2. Format as a data URI
+        image_uri = f"data:image/png;base64,{image_base64}"
         
-        print(f"[EYES] Generating embedding for image at: {image_uri}")
+        print(f"[EYES] Generating embedding from data URI...")
         
         prompt = VISION_PROMPT_GET_EMBEDDING
         messages = [
@@ -152,7 +182,7 @@ def get_visual_embedding(x, y):
         return None
 
 def main():
-    print("--- Sentinel School v2.7 (Learning Wizard) ---")
+    print("--- Sentinel School v2.8 (Learning Wizard) ---")
     
     print(f"Initializing memory at: {DB_PATH}")
     memory.init_db()

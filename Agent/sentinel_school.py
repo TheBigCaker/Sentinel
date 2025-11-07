@@ -8,7 +8,7 @@ import pyautogui
 import sentinel_memory
 import pygetwindow as gw
 import psutil
-from pathlib import Path
+from pathlib import Path # Keep this import
 import mss
 import base64
 import io
@@ -26,7 +26,7 @@ try:
         config = json.load(f)
     
     MODEL_PATH = config['model_path']
-    MMPROJ_PATH = config['mmproj_path'] # <-- v2.9.1: LOAD MMPROJ PATH
+    MMPROJ_PATH = config['mmproj_path']
     DB_PATH = config['db_path']
     SCREENSHOT_FILE = config['screenshot_file']
     
@@ -40,9 +40,10 @@ except KeyError as e:
     print(f"ERROR: Config file is missing a key: {e}")
     sys.exit(1)
 
-# --- 2. PROMPTS (v2.9) ---
+# --- 2. PROMPTS (v2.9.2 - Reverted to v2.5 prompt) ---
 VISION_PROMPT_GET_EMBEDDING = (
-    "USER: [Image]What is in this image?"
+    "USER: [Image]Look at this small, cropped image of a user interface element. "
+    "Generate a vector embedding for this image."
 )
 
 # -------------------------------------------
@@ -52,10 +53,10 @@ def get_full_screenshot_path():
 
 def take_screenshot_mss(x, y, width=64, height=64):
     """
-    Takes a small, focused screenshot using mss.
-    v2.8: This handles multi-monitor and negative coordinates.
+    Takes a small, focused screenshot using mss and SAVES TO DISK.
+    v2.9.2: Fixes Base64 bug by saving to file for file:/// URI.
     """
-    full_path = get_full_screenshot_path()
+    full_path = get_full_screenshot_path() # Get the temp file path
     try:
         with mss.mss() as sct:
             monitor = {
@@ -65,11 +66,11 @@ def take_screenshot_mss(x, y, width=64, height=64):
                 "height": height,
             }
             sct_img = sct.grab(monitor)
-            img_bytes = mss.tools.to_png(sct_img.rgb, sct_img.size)
-            print(f"[EYES] Screenshot captured in memory.")
-            img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-            print(f"[EYES] Image converted to Base64.")
-            return img_base64
+            
+            # Save the image to disk
+            mss.tools.to_png(sct_img.rgb, sct_img.size, output=full_path)
+            print(f"[EYES] Screenshot saved to: {full_path}")
+            return full_path # Return the path
             
     except Exception as e:
         print(f"[EYES] Error: Could not take screenshot with mss: {e}")
@@ -121,7 +122,7 @@ def load_ai_model():
     try:
         llm = Llama(
             model_path=MODEL_PATH,
-            mmproj_path=MMPROJ_PATH, # <-- v2.9.1: PLUG IN THE "EYES"
+            mmproj_path=MMPROJ_PATH, # <-- This is correct
             n_ctx=2048,
             n_batch=512,
             logits_all=True,
@@ -136,34 +137,39 @@ def load_ai_model():
 def get_visual_embedding(x, y):
     """
     Takes a small, focused screenshot and returns its vector embedding.
+    v2.9.2: Reverts to file:/// URI scheme.
     """
     print(f"[EYES] Learning target at ({x}, {y})...")
     
-    image_base64 = take_screenshot_mss(x, y)
-    if not image_base64:
+    # 1. Get the path to the saved screenshot
+    screenshot_path = take_screenshot_mss(x, y)
+    if not screenshot_path:
         return None
         
     try:
-        image_uri = f"data:image/png;base64,{image_base64}"
-        print(f"[EYES] Generating embedding from data URI...")
+        # 2. Convert the Windows path to a valid file URI
+        # This was the fix from v2.7!
+        image_uri = Path(screenshot_path).as_uri()
+        print(f"[EYES] Generating embedding from file URI: {image_uri}")
         
         prompt = VISION_PROMPT_GET_EMBEDDING
         messages = [
             {"role": "user",
              "content": [
                 {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": image_uri}}
+                {"type": "image_url", "image_url": {"url": image_uri}} # Use the file URI
              ]}
         ]
     
         response = llm.create_chat_completion(
             messages=messages,
-            max_tokens=100
+            max_tokens=100,
+            embedding=True # Explicitly ask for an embedding
         )
         
         print(f"[EYES] Full Embedding Response: {response}")
         
-        # We need BOTH the embedding AND a text response
+        # Check for the embedding on the response object (from v2.5)
         if 'embedding' in response and response['embedding']:
             embedding = response['embedding']
             print(f"[EYES] Successfully generated embedding (Size: {len(embedding)}).")
@@ -177,7 +183,7 @@ def get_visual_embedding(x, y):
         return None
 
 def main():
-    print("--- Sentinel School v2.9.1 (Learning Wizard) ---")
+    print("--- Sentinel School v2.9.2 (Learning Wizard) ---")
     
     print(f"Initializing memory at: {DB_PATH}")
     memory.init_db()
@@ -226,7 +232,7 @@ def main():
                 y=y,
                 notes=f"Taught by user in Sentinel School."
             )
-            print("\n--- âœ… SUCCESS! ---")
+            print("\n--- ✅ SUCCESS! ---")
             print(f"I have successfully learned the '{target_label}' for '{app_name}'.")
             print(f"You can now run 'python sentinel_agent.py' to test it.")
         else:

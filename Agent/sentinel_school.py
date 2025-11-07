@@ -9,9 +9,9 @@ import sentinel_memory
 import pygetwindow as gw
 import psutil
 from pathlib import Path
-import mss               # <-- v2.8: Import mss
-import base64            # <-- v2.8: Import base64
-import io                # <-- v2.8: Import io
+import mss
+import base64
+import io
 
 try:
     import win32process
@@ -26,6 +26,7 @@ try:
         config = json.load(f)
     
     MODEL_PATH = config['model_path']
+    MMPROJ_PATH = config['mmproj_path'] # <-- v2.9: LOAD MMPROJ PATH
     DB_PATH = config['db_path']
     SCREENSHOT_FILE = config['screenshot_file']
     
@@ -39,9 +40,9 @@ except KeyError as e:
     print(f"ERROR: Config file is missing a key: {e}")
     sys.exit(1)
 
-# --- 2. PROMPTS (v2.7) ---
+# --- 2. PROMPTS (v2.9) ---
 VISION_PROMPT_GET_EMBEDDING = (
-    "USER: [Image]Describe this user interface element briefly."
+    "USER: [Image]What is in this image?" # <-- v2.9: Simplified prompt
 )
 
 # -------------------------------------------
@@ -57,30 +58,17 @@ def take_screenshot_mss(x, y, width=64, height=64):
     full_path = get_full_screenshot_path()
     try:
         with mss.mss() as sct:
-            # Define the capture region centered on (x, y)
             monitor = {
                 "top": y - (height // 2),
                 "left": x - (width // 2),
                 "width": width,
                 "height": height,
             }
-            
-            # Grab the data
             sct_img = sct.grab(monitor)
-            
-            # Save to an in-memory buffer
             img_bytes = mss.tools.to_png(sct_img.rgb, sct_img.size)
             print(f"[EYES] Screenshot captured in memory.")
-            
-            # --- v2.8: Convert to Base64 ---
             img_base64 = base64.b64encode(img_bytes).decode('utf-8')
             print(f"[EYES] Image converted to Base64.")
-            
-            # Optional: Save to disk for debugging
-            # with open(full_path, "wb") as f:
-            #     f.write(img_bytes)
-            # print(f"Screenshot saved to {full_path}")
-            
             return img_base64
             
     except Exception as e:
@@ -121,13 +109,23 @@ def load_ai_model():
         return
         
     print(f"[TEACHER] Loading Gemma 3 model... (This may take a moment)")
+    
+    if not os.path.exists(MODEL_PATH):
+        print(f"ERROR: 'model_path' not found: {MODEL_PATH}")
+        sys.exit(1)
+    if not os.path.exists(MMPROJ_PATH):
+        print(f"ERROR: 'mmproj_path' not found: {MMPROJ_PATH}")
+        print("This file is the 'Eyes' of the model and is required for vision.")
+        sys.exit(1)
+
     try:
         llm = Llama(
             model_path=MODEL_PATH,
+            mmproj_path=MMPROJ_PATH, # <-- v2.9: PLUG IN THE "EYES"
             n_ctx=2048,
             n_batch=512,
             logits_all=True,
-            embedding=True, # MUST be true to generate embeddings
+            embedding=True,
             verbose=False
         )
         print("[TEACHER] Model loaded successfully.")
@@ -138,19 +136,15 @@ def load_ai_model():
 def get_visual_embedding(x, y):
     """
     Takes a small, focused screenshot and returns its vector embedding.
-    v2.8 FIX: Uses mss and base64 data URI
     """
     print(f"[EYES] Learning target at ({x}, {y})...")
     
-    # 1. Get the base64-encoded image data
     image_base64 = take_screenshot_mss(x, y)
     if not image_base64:
         return None
         
     try:
-        # 2. Format as a data URI
         image_uri = f"data:image/png;base64,{image_base64}"
-        
         print(f"[EYES] Generating embedding from data URI...")
         
         prompt = VISION_PROMPT_GET_EMBEDDING
@@ -169,6 +163,7 @@ def get_visual_embedding(x, y):
         
         print(f"[EYES] Full Embedding Response: {response}")
         
+        # We need BOTH the embedding AND a text response
         if 'embedding' in response and response['embedding']:
             embedding = response['embedding']
             print(f"[EYES] Successfully generated embedding (Size: {len(embedding)}).")
@@ -182,7 +177,7 @@ def get_visual_embedding(x, y):
         return None
 
 def main():
-    print("--- Sentinel School v2.8 (Learning Wizard) ---")
+    print("--- Sentinel School v2.9 (Learning Wizard) ---")
     
     print(f"Initializing memory at: {DB_PATH}")
     memory.init_db()
